@@ -5,6 +5,7 @@ import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.Optional;
 import java.util.Random;
 import java.util.UUID;
 /*
@@ -53,18 +54,26 @@ public class Agent implements PropertyChangeListener {
 	}
 
 	// member variables
-	private UUID id;        // universal unique id
-	private String name;    // agent name
-	private int efficiency; // agent efficiency	
+	protected UUID id;        // universal unique id
+	protected String name;    // agent name
+	protected int efficiency; // agent efficiency	
+	protected boolean busy;   // is agent occupied?
+	
+	// keep track of event time since started
+	protected int count;
+
+	// manage tasks assigned to agent
+	protected Optional<Demand> current_task;
+	protected int progress;
+	
+	// used for random number generation
 	protected Random rand;
-	
-	private boolean busy; // is agent occupied?
-	
+		
 	// list of Supply (resources, talent, skills)
 	public ArrayList<Supply> resources;
 	
 	/*
-	 * Functions for inherited class
+	 * Agent "interface" functions to be overridden in child class
 	 */
 	public void start(){
 		// to be implemented by child classes
@@ -75,6 +84,10 @@ public class Agent implements PropertyChangeListener {
 	public void doSomething(DemandList d) {
 		// needs to be overloaded by child classes
 	}
+	
+	/*
+	 * PropertyChangeListener interface functions
+	 */
 	@Override
 	public void propertyChange(PropertyChangeEvent evt) {
 		if(evt.getPropertyName()=="Step") {
@@ -97,7 +110,7 @@ public class Agent implements PropertyChangeListener {
 	// the SupplyDemandDictionary class
 	//
 	// ASSUMPTION: demand effort is equal across all supply needs
-	boolean demandValid(Demand d, SupplyDemandDictionary sdd) {
+	public boolean demandValid(Demand d, SupplyDemandDictionary sdd) {
 		
 		// cursory check: do I have the supplies to meet this demand?
 		// TODO: if not, can I put a call out for another Agent who can help?
@@ -109,12 +122,12 @@ public class Agent implements PropertyChangeListener {
 			
 			System.out.println("..checking against Supply: "+s.getName());
 			
-			if(sdd.isValidMatch(d.getType(), s.getType())){
+			if(sdd.isValidMatch(d.getType(), s)){
 			
 				System.out.println("...checking against SupplyType "+s.getType().toString());
 				
-				// use efficiency*supply amount and compare to demand effort
-				if(((double)(this.getEfficiency())/100.)*(double)(s.getAmount()) >= (double)(d.getEffort())) {
+				// use supply amount and compare to demand effort
+				if(s.getAmount() >= d.getEffort()) {
 					System.out.println("...agent has enough remaining capacity!");
 					
 					// check if available or expired...
@@ -129,14 +142,50 @@ public class Agent implements PropertyChangeListener {
 				else {
 				System.out.println("...BUT agent does not have enough remaining capacity. demand effort="+
 									String.valueOf(d.getEffort())+
-									", agent capacity="+String.valueOf(s.getAmount())+
-									", agent efficiency="+String.valueOf(this.getEfficiency())+
-									", agent ability="+String.valueOf(this.getEfficiency()*s.getAmount()/100));
+									", agent capacity="+String.valueOf(s.getAmount()));
 				}
 			}
 		}
 			
 		return false;
+	}
+	
+	// start handling a Demand
+	protected void startNewDemand(Demand d) {
+		this.setBusy(true);
+		this.setProgress(0);
+		
+		d.setActive(); // mark task as started by an agent
+		this.setCurrentTask(Optional.of(d));
+
+		System.out.println("Agent "+this.getName()+" has started task "+d.toString());
+	}
+	
+	// make progress on Demand
+	protected void setIncrementalProgress() {
+		// update progress
+		this.setProgress(this.getProgress()+1);
+
+		// check progress against demand
+		if (!this.getCurrentTask().isEmpty()) {
+			if(this.getProgress() >= this.getCurrentTask().get().getEffort()) {
+				// demand is complete!
+				this.finishDemand();
+			}
+		}
+	}
+	
+	// wrap up a Demand
+	protected void finishDemand() {
+		// access Demand
+		Demand d = this.getCurrentTask().get();
+		d.setComplete();
+		System.out.println("Agent "+this.getName()+" has completed task "+d.toString());
+		
+		// clear out variables
+		this.setCurrentTask(Optional.empty());
+		this.setProgress(-1);
+		this.setBusy(false);
 	}
 	
 	/*
@@ -174,11 +223,37 @@ public class Agent implements PropertyChangeListener {
 		resources.clear();
 		resources.addAll(rsrcs);
 	}
+	
 	public boolean isBusy() {
 		return busy;
 	}
+	
 	public void setBusy(boolean busy) {
 		this.busy = busy;
+	}
+	
+	public int getCount() {
+		return count;
+	}
+
+	public void setCount(int count) {
+		this.count = count;
+	}
+
+	public Optional<Demand> getCurrentTask() {
+		return current_task;
+	}
+
+	public void setCurrentTask(Optional<Demand> task) {
+		this.current_task = task;
+	}
+	
+	public int getProgress() {
+		return progress;
+	}
+
+	public void setProgress(int progress) {
+		this.progress = progress;
 	}
 	
 	/*

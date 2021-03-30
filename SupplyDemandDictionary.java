@@ -1,4 +1,6 @@
 import java.util.*;
+
+import javafx.util.Pair;
 /*
  * SupplyDemandDictionary Class for Agent Based Modeling
  *  @author Chad Holmes
@@ -16,36 +18,49 @@ import java.util.*;
 public class SupplyDemandDictionary {
 	
 	// only property is a HashTable
-	private Hashtable<DemandType, ArrayList<SupplyType>> sdmap;
+	//private Hashtable<DemandType, ArrayList<SupplyType>> sdmap;
+	private Hashtable<DemandType, ArrayList<Pair<SupplyType, SupplyQuality>>> sdmap;
 	
 	/*
 	 *  Constructor
 	 */
 	SupplyDemandDictionary(){
-		sdmap = new Hashtable<DemandType, ArrayList<SupplyType>>();
+		sdmap = new Hashtable<DemandType, ArrayList<Pair<SupplyType,SupplyQuality>>>();
 	}
 
 	// Add a DemandType, SupplyType pair
-	void addSupplyDemand(DemandType dt, SupplyType st) {
+	void addSupplyDemand(DemandType dt, SupplyType st, SupplyQuality sq) {
 		
 		// check if this DemandType already exists in dictionary
 		if(sdmap.containsKey(dt)) {
 			// add SupplyType to existing list of SupplyTypes tied to DemandType
-			sdmap.get(dt).add(st);
+			sdmap.get(dt).add(new Pair<SupplyType,SupplyQuality>(st,sq));
 		}
 		else {
 			// DemandType is not in dictionary yet, create a new pair
-			ArrayList<SupplyType> alist = new ArrayList<SupplyType>();
-			alist.add(st);
+			ArrayList<Pair<SupplyType,SupplyQuality>> alist = new ArrayList<Pair<SupplyType,SupplyQuality>>();
+			alist.add(new Pair<SupplyType,SupplyQuality>(st,sq));
 			sdmap.put(dt, alist);
 		}
 	}
 	
-	// Convenience function for determining if a SupplyType matches a DemandType
-	boolean isValidMatch(DemandType dt, SupplyType st) {
+	// Convenience function for determining if a Supply matches a DemandType
+	boolean isValidMatch(DemandType dt, Supply s) {
+		return isValidMatch(dt, s.getType(), s.getQuality());
+	}
+	
+	// Convenience function for determining if a SupplyType of a certain SupplyQuality matches a DemandType
+	boolean isValidMatch(DemandType dt, SupplyType st, SupplyQuality sq) {
 		// if DemandType in dictionary, check it's paired ArrayList of SupplyType
 		if(sdmap.containsKey(dt)) {
-			return sdmap.get(dt).contains(st);
+			for (Pair<SupplyType,SupplyQuality> p : sdmap.get(dt)) {
+				
+				// look for match based on SupplyType and Quality
+				// specifically, sq must be greater or equality to quality in map
+				if(p.getKey()==st && (sq.ordinal() >= p.getValue().ordinal())) {
+					return true;
+				}
+			}
 		}
 		return false;
 	}
@@ -56,19 +71,21 @@ public class SupplyDemandDictionary {
 		// if DemandType in dictionary, check it's paired ArrayList of SupplyType
 		if(sdmap.containsKey(dt)) {
 			
-			// pull required SupplyTypes
-			ArrayList<SupplyType> req_sts = sdmap.get(dt);
-			boolean allfound = true;
+			// pull required list of SupplyTypes
+			ArrayList<Pair<SupplyType,SupplyQuality>> req_sts = sdmap.get(dt);
 			
 			// cycle through required SupplyTypes
-			for (SupplyType req : req_sts) {
+			boolean allfound = true;
+			for (Pair<SupplyType,SupplyQuality> req : req_sts) {
 			
 				// cycle through supplies to look for a match
 				boolean found = false;
 				for (Supply chk : sts) {
-					if(chk.getType() == req) {
-						
-						// found a matching supply type!
+					
+					// is there a match with the current required SupplyType and SupplyQuality?
+					if(chk.getType() == req.getKey() && 
+                       chk.getQuality().ordinal() >= req.getValue().ordinal() ) {
+						// found a match!
 						found=true;
 						break;
 					}
@@ -100,28 +117,13 @@ public class SupplyDemandDictionary {
 			DemandType nextdt = names.nextElement();
 			retstr += " " + nextdt.toString() + ":";
 			
-			for (SupplyType st: sdmap.get(nextdt)) {
-				retstr += " " + st.toString(); 
+			for (Pair <SupplyType,SupplyQuality> pr: sdmap.get(nextdt)) {
+				retstr += " " + pr.getKey().toString() + 
+						  " (" + pr.getValue().toString() + ")"; 
 			}
 			retstr += "\n";
 		}
 		retstr += "]\n";
 		return retstr;
 	}	
-	
-//	public static void main(String args[]) {
-//		
-//		SupplyDemandDictionary sdd = new SupplyDemandDictionary();
-//		
-//		// map needs to skills
-//		sdd.addSupplyDemand(DemandType.NEED1,SupplyType.SKILL1);
-//		sdd.addSupplyDemand(DemandType.NEED2,SupplyType.SKILL2);
-//		sdd.addSupplyDemand(DemandType.NEED2,SupplyType.SKILL3);
-//		sdd.addSupplyDemand(DemandType.NEED2,SupplyType.SKILL4);
-//		sdd.addSupplyDemand(DemandType.NEED3,SupplyType.SKILL3);
-//		sdd.addSupplyDemand(DemandType.NEED4,SupplyType.SKILL1);
-//		sdd.addSupplyDemand(DemandType.NEED4,SupplyType.SKILL4);
-//		
-//		System.out.println(sdd.toString());
-//	}
 }

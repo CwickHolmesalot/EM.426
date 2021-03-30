@@ -1,16 +1,18 @@
 import java.beans.PropertyChangeEvent;
 import java.beans.PropertyChangeListener;
 import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.ListIterator;
 import java.util.Optional;
 import java.util.Random;
 /*
- * EngineerAgent is a engineer Agent with a PropertyChangeListener 
- * for use in Agent Based Modeling
+ *  EngineerAgent is a engineer Agent with a PropertyChangeListener 
+ *  for use in Agent Based Modeling
  *  @author Chad Holmes
  *
  *  For MIT EM.426 Spring 2021 class
  *  
- *  The EngineerAgent class ...
+ *  The EngineerAgent class ... is an Engineer Agent
  *  
  */
 public class EngineerAgent extends Agent implements PropertyChangeListener {
@@ -19,7 +21,7 @@ public class EngineerAgent extends Agent implements PropertyChangeListener {
 	 * Constructors
 	 */
 	public EngineerAgent() {
-		this("Engineer",90);
+		this("Engineer",75);
 	}
 	
 	public EngineerAgent(String name, int efficiency) {
@@ -33,12 +35,6 @@ public class EngineerAgent extends Agent implements PropertyChangeListener {
 	/* 
 	 * Member variables
 	 */
-	// keep track of event time since started
-	private int count;
-
-	// manage tasks assigned to agent
-	private Optional<Demand> current_task;
-	private int progress;
 	
 	/* 
 	 * Helper functions
@@ -53,17 +49,6 @@ public class EngineerAgent extends Agent implements PropertyChangeListener {
 		// add skills to resources list
 		this.resources.add(skill_model);
 		this.resources.add(skill_comms);
-	}
-	
-	private void startNewDemand(Demand d) {
-		this.setBusy(true);
-		this.setCount(0);
-		this.setCurrentTask(Optional.of(d));
-	}
-	
-	private void finishDemand() {
-		this.setProgress(-1);
-		this.setBusy(false);
 	}
 
 	@Override
@@ -86,10 +71,17 @@ public class EngineerAgent extends Agent implements PropertyChangeListener {
 		
 		if (!this.isBusy()) {
 			for (Demand d : dl.getDemandlist()) {
-				if(this.demandValid(d, dl.getSupplyDemandDict())) {
-					System.out.println("EngineerAgent "+this.getName()+" starting a new task! "+d.toString());
-					this.startNewDemand(d);
-					break;
+			//for (int dindex= 0; dindex < dl.getDemandlist().size(); dindex++) {
+				
+				//Demand test = dl.getDemandlist().get(dindex);
+				// only consider Demands that are unclaimed and not yet complete
+				if(d.getState() == DemandState.QUEUED) {
+					if(this.demandValid(d, dl.getSupplyDemandDict())) {
+						//System.out.println("EngineerAgent "+this.getName()+" starting a new task! "+d.toString());
+						this.startNewDemand(d);
+						break;
+					}
+					System.out.println("EngineerAgent "+this.getName()+" cannot perform demand: "+d.toString());
 				}
 			}
 		}
@@ -97,34 +89,21 @@ public class EngineerAgent extends Agent implements PropertyChangeListener {
 			System.out.println("EngineerAgent "+this.getName()+" is too busy to start a new task");	
 		}
 	}
-
+	
 	@Override
 	public void step() {
-		this.setCount(this.getCount()+1);
+		
+		boolean flaked = this.getEfficiency()<rand.nextInt(101);
+		
+		if(!flaked) {
+			this.setCount(this.getCount()+1);
+			if(this.isBusy()) {
+				this.setIncrementalProgress();
+			}
+		}
+		else {
+			System.out.println("EngineerAgent "+this.getName()+" chased links on Google...");
+		}
 		System.out.println("..current steps: "+this.getCount());
-	}
-
-	public int getCount() {
-		return count;
-	}
-
-	public void setCount(int count) {
-		this.count = count;
-	}
-
-	public Optional<Demand> getCurrentTask() {
-		return current_task;
-	}
-
-	public void setCurrentTask(Optional<Demand> task) {
-		this.current_task = task;
-	}
-	
-	public int getProgress() {
-		return progress;
-	}
-
-	public void setProgress(int progress) {
-		this.progress = progress;
 	}
 }

@@ -4,13 +4,13 @@ import java.util.ArrayList;
 import java.util.Optional;
 import java.util.Random;
 /*
- * ManagerAgent is a manager Agent with a PropertyChangeListener 
- * for use in Agent Based Modeling
+ *  ManagerAgent is a manager Agent with a PropertyChangeListener 
+ *  for use in Agent Based Modeling
  *  @author Chad Holmes
  *
  *  For MIT EM.426 Spring 2021 class
  *  
- *  The ManagerAgent class ...
+ *  The ManagerAgent class ... is a Manager Agent
  *  
  */
 public class ManagerAgent extends Agent implements PropertyChangeListener {
@@ -19,7 +19,7 @@ public class ManagerAgent extends Agent implements PropertyChangeListener {
 	 * Constructors
 	 */
 	public ManagerAgent() {
-		this("Manager",70);
+		this("Manager",60);
 	}
 	
 	public ManagerAgent(String name, int efficiency) {
@@ -33,13 +33,7 @@ public class ManagerAgent extends Agent implements PropertyChangeListener {
 	/* 
 	 * Member variables
 	 */
-	// keep track of event time since started
-	private int count;
 
-	// manage tasks assigned to agent
-	private Optional<Demand> current_task;
-	private int progress;
-	
 	/* 
 	 * Helper functions
 	 */
@@ -55,12 +49,6 @@ public class ManagerAgent extends Agent implements PropertyChangeListener {
 		this.resources.add(skill_manage);
 	}
 	
-	private void startNewDemand(Demand d) {
-		this.setBusy(true);
-		this.setCount(0);
-		this.setCurrentTask(Optional.of(d));
-	}
-
 	@Override
 	public void start() {
 		
@@ -81,10 +69,14 @@ public class ManagerAgent extends Agent implements PropertyChangeListener {
 		
 		if (!this.isBusy()) {
 			for (Demand d : dl.getDemandlist()) {
-				if(this.demandValid(d, dl.getSupplyDemandDict())) {
-					System.out.println("ManagerAgent "+this.getName()+" starting a new task! "+d.toString());
-					this.startNewDemand(d);
-					break;
+				// only consider Demands that are unclaimed and not yet complete
+				if(d.getState() == DemandState.QUEUED) {
+					if(this.demandValid(d, dl.getSupplyDemandDict())) {
+						System.out.println("ManagerAgent "+this.getName()+" starting a new task! "+d.toString());
+						this.startNewDemand(d);
+						break;
+					}
+					System.out.println("ScienceAgent "+this.getName()+" cannot perform demand: "+d.toString());
 				}
 			}
 		}
@@ -95,31 +87,18 @@ public class ManagerAgent extends Agent implements PropertyChangeListener {
 
 	@Override
 	public void step() {
-		this.setCount(this.getCount()+1);
+		
+		boolean flaked = this.getEfficiency()<rand.nextInt(101);
+		
+		if(!flaked) {
+			this.setCount(this.getCount()+1);
+			if(this.isBusy()) {
+				this.setIncrementalProgress();
+			}
+		}
+		else {
+			System.out.println("ManagerAgent "+this.getName()+" stepped out for coffee...");
+		}
 		System.out.println("..current steps: "+this.getCount());
-	}
-
-	public int getCount() {
-		return count;
-	}
-
-	public void setCount(int count) {
-		this.count = count;
-	}
-
-	public Optional<Demand> getCurrentTask() {
-		return current_task;
-	}
-
-	public void setCurrentTask(Optional<Demand> task) {
-		this.current_task = task;
-	}
-	
-	public int getProgress() {
-		return progress;
-	}
-
-	public void setProgress(int progress) {
-		this.progress = progress;
 	}
 }

@@ -9,11 +9,13 @@ import java.util.Random;
  *  
  *  The SimEnvironment class creates the simulation environment for
  *  Agent Based Modeling. The primary purpose of SimEnvironment includes:
- *  1. build initial list of demands
- *  2. create agents for the simulation
- *  3. generate new demands over time (randomly)
- *  4. alert agents to new demands
- *   
+ *  1. build initial list of Demands
+ *  2. create Agents for the simulation 
+ *  3. connect Agents to a DemandList
+ *  4. trigger the passage of time
+ *  5. generate new Demands over time (randomly)
+ *  6. add new demands to a DemandList
+ *  ... the magic of Agents handling Demands happens on its own 
  */
 
 public class SimEnvironment {
@@ -93,7 +95,7 @@ public class SimEnvironment {
 				DemandType.values()[dtype], 
 				rand.nextInt(50));
 		
-		System.out.println("++Simulation created new Demand:"+newdemand.toString());
+		System.out.println("\n+D Simulation created new Demand:"+newdemand.toString()+"\n");
 		
 		// add demand to demand_list (which triggers an event)
 		demand_list.newDemand(newdemand);
@@ -142,11 +144,14 @@ public class SimEnvironment {
 			
 			try
 			{
+				// pause before next time step
 			    Thread.sleep(1000);
 			}
 			catch(InterruptedException ex)
 			{
+				// kill loop if an interrupt is captured
 			    Thread.currentThread().interrupt();
+			    break;
 			}
 		}
 	}
