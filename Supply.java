@@ -111,7 +111,7 @@ public class Supply implements ISupply {
 	/* 
 	 * Member Variables
 	 */
-	public UUID id; // universal unique id
+	private UUID id; // universal unique id
 
 	// human-readable identifier
 	private final StringProperty name = new SimpleStringProperty();

@@ -6,11 +6,11 @@ import java.util.*;
  *  For MIT EM.426 Spring 2021 class
  *  
  *  Conceptually, the SupplyDemandDictionary stores a map of DemandTypes
- *  and a list of SupplyTypes that meet that DemandType
+ *  and a list of SupplyTypes that collectively meet that DemandType
  *  
- *  The intent is to look up a DemandType to determine what eligible 
- *  SupplyTypes can be used to meet that Demand.  This supports the first
- *  step is determining if an Agent is capable of being matched to a Demand
+ *  The intent is to look up a DemandType to determine what SupplyTypes \
+ *  are necessary to meet that Demand.  This supports the first step in
+ *  determining if an Agent is capable of being matched to a Demand
  *  
  */
 public class SupplyDemandDictionary {
@@ -18,7 +18,9 @@ public class SupplyDemandDictionary {
 	// only property is a HashTable
 	private Hashtable<DemandType, ArrayList<SupplyType>> sdmap;
 	
-	// Constructor initializes the hashtable
+	/*
+	 *  Constructor
+	 */
 	SupplyDemandDictionary(){
 		sdmap = new Hashtable<DemandType, ArrayList<SupplyType>>();
 	}
@@ -39,15 +41,52 @@ public class SupplyDemandDictionary {
 		}
 	}
 	
-	// Convenience function for determining if SupplyType matches a DemandType
+	// Convenience function for determining if a SupplyType matches a DemandType
 	boolean isValidMatch(DemandType dt, SupplyType st) {
-		
-		// if DemandType in dictionary, check it's paired ArrayList of SupplyTypes
+		// if DemandType in dictionary, check it's paired ArrayList of SupplyType
 		if(sdmap.containsKey(dt)) {
 			return sdmap.get(dt).contains(st);
 		}
+		return false;
+	}
+	
+	// Convenience function for determining if a list of SupplyTypes matches a DemandType
+	boolean isValidMatch(DemandType dt, ArrayList<Supply> sts) {
+		
+		// if DemandType in dictionary, check it's paired ArrayList of SupplyType
+		if(sdmap.containsKey(dt)) {
+			
+			// pull required SupplyTypes
+			ArrayList<SupplyType> req_sts = sdmap.get(dt);
+			boolean allfound = true;
+			
+			// cycle through required SupplyTypes
+			for (SupplyType req : req_sts) {
+			
+				// cycle through supplies to look for a match
+				boolean found = false;
+				for (Supply chk : sts) {
+					if(chk.getType() == req) {
+						
+						// found a matching supply type!
+						found=true;
+						break;
+					}
+				}
+				
+				// track all found
+				allfound = allfound & found;
+				
+				// short circuit if one not found
+				if(!allfound)
+					break;
+			}
+			
+			return allfound;
+		}
 		else {
 			// default to not valid if not explicitly defined in dictionary
+			System.err.println("DemandType not found in SupplyDemandDisctionary: "+dt.toString());
 			return false;
 		}
 	}

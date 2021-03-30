@@ -1,10 +1,15 @@
+/*
+ *  SupplyType for Agent Based Modeling
+ *  @author Chad Holmes
+ *  
+ *  MIT EM.426 Spring 2021 class
+ *  
+ *  Generic enumerated list of types of Supplies, here interpreted as "skills"
+ *  The simulation will need to define what each of these SupplyTypes corresponds
+ *  to for logical matching with DemandTypes
+ */
 
 public enum SupplyType {
 	SKILL1, SKILL2, SKILL3, SKILL4, SKILL5
-	//TECH_SKILL, SOFT_SKILL, RAW_MATERIALS, MONEY, PEOPLE
-	// TECH_SKILL = human technical skill/know-how
-	// SOFT_SKILL = human soft skills, e.g. management, pr
-	// RAW_MATERIALS = material resource
-	// MONEY = financial resource
-	// PEOPLE = talent resource
+
 }
