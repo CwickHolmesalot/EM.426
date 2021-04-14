@@ -1,5 +1,5 @@
 import java.util.*;
-import java.util.logging.Logger;
+//import java.util.logging.Logger;
 
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.IntegerProperty;
@@ -80,6 +80,7 @@ public class Supply implements ISupply {
 	 * replenish set to false
 	 * every nominally set to 1
 	 * until set to timestamp 0L
+	 * learningthreshold set to 300 (hours)
 	 */
 	public Supply(String name, SupplyType type, int capacity, SupplyQuality quality) {
 		this(UUID.randomUUID(), name, type, capacity, quality, 100, 9999, false, 1, 0L);
@@ -102,11 +103,17 @@ public class Supply implements ISupply {
 		this.setReplenish(isReplenishing);
 		this.setEvery(every);
 		this.setUntil(until);
+		this.setLearningthreshold(300);
+		
+		// set learning counter to 0
+		this.resetLearning();
 
 		this.setState(SupplyState.AVAILABLE);
 		this.setLastreplenish(-1);
 		this.resetAmount();
 	}
+	
+	
 
 	/* 
 	 * Member Variables
@@ -147,9 +154,10 @@ public class Supply implements ISupply {
 	private long expirytime;
 	private long lastreplenish;
 	
-	// Demands associated with this supply
-	private ArrayList<Demand> associatedDemandsList = new ArrayList<Demand>();
-	
+	// learning rate
+	private int learningthreshold;
+	private int learningcounter;
+
 	/* 
 	 * Getters and Setters	
 	 */	
@@ -189,6 +197,10 @@ public class Supply implements ISupply {
 	public int getAmount() { return amount.get(); }
 	public void setAmount(int amount) { this.amount.set(amount); }
 	public void resetAmount() { this.amount.set(this.getCapacity()); }
+	public void reduceAmount(int byamount) { 
+		this.amount.set(this.amount.get()-byamount);
+		this.learn(byamount);
+	}
 	
 	// QUALITY ----------------------------------
 	public ObjectProperty<SupplyQuality> qualityProperty() { return quality; }
@@ -233,8 +245,17 @@ public class Supply implements ISupply {
 	public long getExpirytime() { return expirytime; }
 	public void setExpirytime( long expiry ) { this.expirytime = expiry; }
 	
+	// LEARNINGTHRESHOLD ------------------------
+	public int getLearningthreshold() {return learningthreshold;}
+	public void setLearningthreshold(int learningthreshold) {this.learningthreshold = learningthreshold;}
+	public void resetLearning() {this.learningcounter = 0;}
+
+	// LEARNINGCOUNTER --------------------------
+	public int getLearningcounter() {return learningcounter;}
+	public void setLearningcounter(int learningcounter) {this.learningcounter = learningcounter;}
+	
 	// class logger
-	private static final Logger logger = Logger.getLogger(Demand.class.getName());
+	//private static final Logger logger = Logger.getLogger(Demand.class.getName());
 
 	/*
 	 *  Convenience Functions
@@ -302,15 +323,20 @@ public class Supply implements ISupply {
 		return retval;
 	}
 	
-	// manage Demands tied to Supply
-	public boolean anyAssociatedDemands() {
-		return this.associatedDemandsList.size() > 0;
-	}
-	public ArrayList<Demand> getAssociatedDemands(){
-		return this.associatedDemandsList;
-	}
-	public void addAssociatedDemand(Demand d) {
-		this.associatedDemandsList.add(d);
+	// update SupplyQuality based on experience
+	private void learn(int experience) {
+		if(this.getLearningthreshold() < (this.learningcounter + experience)) {
+			if((this.getQuality().ordinal()+1) < SupplyQuality.values().length) {
+				this.setQuality(SupplyQuality.values()[this.getQuality().ordinal()+1]);
+				this.resetLearning();
+			}
+			else {
+				// already at highest quality of skill!  nothing to do here.
+			}
+		}
+		else {
+			this.learningcounter += experience;
+		}
 	}
 	
 	// print all components of supply
@@ -320,12 +346,6 @@ public class Supply implements ISupply {
 				+ every + ",\n until=" + until + ",\n lifespan=" + lifespan + ",\n starttime=" + starttime + ",\n expirytime="
 				+ expirytime + ",\n lastreplenish=" + lastreplenish + "\n]";
 		
-		if (this.associatedDemandsList.size() > 0) {
-			retstr += "\nAssociated Demands:\n";
-			for (Demand d : this.associatedDemandsList) {
-				retstr += d.toString();
-			}
-		}
 		return retstr;
 	}
 	

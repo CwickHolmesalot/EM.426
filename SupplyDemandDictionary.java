@@ -15,7 +15,7 @@ import javafx.util.Pair;
  *  determining if an Agent is capable of being matched to a Demand
  *  
  */
-public class SupplyDemandDictionary {
+public class SupplyDemandDictionary implements Iterable<DemandType> {
 	
 	// only property is a HashTable
 	//private Hashtable<DemandType, ArrayList<SupplyType>> sdmap;
@@ -42,6 +42,10 @@ public class SupplyDemandDictionary {
 			alist.add(new Pair<SupplyType,SupplyQuality>(st,sq));
 			sdmap.put(dt, alist);
 		}
+	}
+	
+	ArrayList<Pair<SupplyType, SupplyQuality>> getRequiredSupplies(DemandType dt){
+		return sdmap.get(dt);
 	}
 	
 	// Convenience function for determining if a Supply matches a DemandType
@@ -107,7 +111,17 @@ public class SupplyDemandDictionary {
 			return false;
 		}
 	}
-
+	
+	/*
+	 * Implement Iterable
+	 */
+	public Iterator<DemandType> iterator(){
+		return this.sdmap.keySet().iterator();
+	}
+	
+	/* 
+	 * Implement toString()
+	 */
 	@Override
 	public String toString() {
 		String retstr = "SupplyDemandDictionary \n[\n";

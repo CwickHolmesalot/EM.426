@@ -1,3 +1,6 @@
+import java.beans.PropertyChangeEvent;
+import java.beans.PropertyChangeListener;
+import java.beans.PropertyChangeSupport;
 import java.util.ArrayList;
 import java.util.Random;
 
@@ -10,33 +13,45 @@ import java.util.Random;
  *  The SimEnvironment class creates the simulation environment for
  *  Agent Based Modeling. The primary purpose of SimEnvironment includes:
  *  1. build initial list of Demands
- *  2. create Agents for the simulation 
- *  3. connect Agents to a DemandList
- *  4. trigger the passage of time
- *  5. generate new Demands over time (randomly)
- *  6. add new demands to a DemandList
+ *  2. create Agents for the simulation
+ *  3. generate new Demands over time (randomly)
+ *  4. add new demands to a DemandList
+ *  5. keep track of global time as the minimum local agent time
  *  ... the magic of Agents handling Demands happens on its own 
  */
 
-public class SimEnvironment {
+public class SimEnvironment implements PropertyChangeListener {
 
 	/* 
 	 * Member variables for simulation environment
 	 */
-	private DemandList demand_list;         // list of demands
+	private DemandList demand_list; // list of demands
 	private Random rand;
 	
 	// keep track of Agents here so they don't get garbage collected
 	private ArrayList<Agent> agent_list;
+	private PropertyChangeSupport support;
+	
+	// global (committed) time
+	private int global_time;
 	
 	/* 
 	 * Constructors
 	 */
 	public SimEnvironment() {
+		
+		// list of all demands in simulation
 		demand_list = new DemandList();
+		
+		// list of all agents in simulation
 		agent_list = new ArrayList<Agent>();
+		
+		// random number generator
 		rand = new Random();
 		rand.setSeed(43);
+		
+		// PropertyChangeListener set-up
+		support = new PropertyChangeSupport(this);
 		
 		// initialize environment
 		initialize();
@@ -76,19 +91,27 @@ public class SimEnvironment {
 
 		// view mapping
 		demand_list.printSupplyDemandMap();
+		
+		// set global time
+		this.setGlobaltime(0);
+	}
+	
+	// Getters and Setters
+	public int getGlobaltime() {
+		return global_time;
+	}
+
+	public void setGlobaltime(int globaltime) {
+		this.global_time = globaltime;
 	}
 	
 	// generate demands for demand_list
 	public void createDemand() {
-		
-		// randomly create a demand
+		// RANDOMNESS/UNCERTAINTY
 		
 		// number of demand types
-		int ndt = DemandType.values().length;
-		int dtype = rand.nextInt(ndt);
-		
-		int ndp = DemandPriority.values().length;
-		int dprior = rand.nextInt(ndp);
+		int dtype = rand.nextInt(DemandType.values().length);
+		int dprior = rand.nextInt(DemandPriority.values().length);
 		
 		Demand newdemand = new Demand("Demand"+String.valueOf(demand_list.getDemandCount()),
 				DemandPriority.values()[dprior], 
@@ -101,26 +124,73 @@ public class SimEnvironment {
 		demand_list.newDemand(newdemand);
 	}
 	
-	public void createAgents(int numAgents) {
+	// randomly choose whether or not to generate a new Demand
+	public void createRandomDemand(int pcntchance) {
+		
+		// RANDOMNESS/UNCERTAINTY
+		if(rand.nextInt(100)<pcntchance) {
+			createDemand();
+		}
+	}
+	
+	public void createAgents(int nEng, int nSci, int nMgr) {
 
-		//TODO: implement createAgents with ability to create numAgents agents
-		// using random number generator to determine which kind
+		for ( int e = 0; e < nEng; e++)
+			agent_list.add(new EngineerAgent("Engineer"+(e+1)));
 		
-		//Random rand = new Random();
+		for ( int s = 0; s < nSci; s++)
+			agent_list.add(new ScienceAgent("Scientist"+(s+1)));
 		
-		agent_list.add(new EngineerAgent());
-		agent_list.add(new ScienceAgent());
-		agent_list.add(new ManagerAgent());
+		for ( int m = 0; m < nMgr; m++)
+			agent_list.add(new ManagerAgent("Manager"+(m+1)));
 		
 		for (Agent a : agent_list) {
 			
-			// connect agent with demand list
+			// give agent the supply-demand map
+			a.setSupplyDemandDictionary(demand_list.getSupplyDemandDict());
+			
+			// randomly assign different horizon times to agents
+			a.setHorizonTime(rand.nextInt(100));
+			
+			// bind agents to property change supports
 			demand_list.addPropertyChangeListener(a);
+			support.addPropertyChangeListener(a);
+			a.addPropertyChangeListener(this);
 			
 			// turn agent loose
 			a.start();
-		}		
+		}
 	}
+	
+	@Override
+	public void propertyChange(PropertyChangeEvent evt) {
+//		if(evt.getPropertyName() == "agenttimecheck") {
+//			
+//
+//		}
+//		else {
+			System.err.println("SimEnvironment does not know how to manage event "+evt.getPropertyName());
+//		}
+ 	}
+
+	// Time management signals
+    public void syncGlobalTime() {
+
+    	int  min_time = Integer.MAX_VALUE;
+    	
+    	// check all agents to identify min local time
+		for (Agent a : this.agent_list) {
+			if(a.getAgentTime() < min_time) {
+				min_time = a.getAgentTime();
+			}
+		}
+    	
+    	// update all agents to solidify completed tasks
+        support.firePropertyChange("commituntil", null, min_time);
+        
+        // update global time stamp
+		this.setGlobaltime(min_time);
+    }
 	
 	public static void main(String args[]) {
 				
@@ -128,19 +198,15 @@ public class SimEnvironment {
 		SimEnvironment sim = new SimEnvironment();
 
 		/****** DEFINE AGENTS ******/
-		sim.createAgents(3);		
+		sim.createAgents(5,5,2);		
 
 		/*
 		 * Start simulation
 		 */
-		while(sim.demand_list.getElapsedtime() < 300) {
+		for (int i = 0; i < 300; i++) {			
 			
-			sim.demand_list.nextTimeStep();
-
 			/****** GENERATE DEMANDS ******/
-			if(sim.demand_list.getElapsedtime() % 25 == 1) {
-				sim.createDemand();
-			}
+			sim.createRandomDemand(50);
 			
 			try
 			{
@@ -153,6 +219,9 @@ public class SimEnvironment {
 			    Thread.currentThread().interrupt();
 			    break;
 			}
+			
+			// update simulation global time
+	        sim.syncGlobalTime();
 		}
 	}
 }

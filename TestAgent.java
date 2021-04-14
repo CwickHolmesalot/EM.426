@@ -18,7 +18,7 @@ public class TestAgent extends Agent implements PropertyChangeListener {
 		this.setComplete(false);
 	}
 
-	private int id;
+	//private int id;
 	private int count;
 	private boolean complete;
 	

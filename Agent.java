@@ -1,13 +1,16 @@
 import java.beans.PropertyChangeEvent;
 import java.beans.PropertyChangeListener;
-import java.io.PrintStream;
-import java.nio.charset.Charset;
+import java.beans.PropertyChangeSupport;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.Hashtable;
+import java.util.Iterator;
 import java.util.Optional;
 import java.util.Random;
 import java.util.UUID;
+
+import javafx.util.Pair;
 /*
  * Agent base class for Agent Based Modeling
  *  @author Chad Holmes
@@ -20,7 +23,6 @@ import java.util.UUID;
  *  2. a name
  *  3. an efficiency (i.e. how effective is the agent at completing work)
  *  4. a list of "supplies," i.e., a set of skills 
- *  
  */
 public class Agent implements PropertyChangeListener {
 
@@ -45,147 +47,408 @@ public class Agent implements PropertyChangeListener {
 		this.setId(id);
 		this.setName(name);
 		this.setEfficiency(efficiency);
-		this.setBusy(false);
-		
+		this.setAgentTime(0);
+		this.setHorizonTime(50);
+		this.setCurrenttask(Optional.empty());
 		this.rand = new Random();
 		rand.setSeed(43);
 		
 		this.resources = new ArrayList<Supply>();
-	}
+		
+		this.seen_tasks = new ArrayList<UUID>();
+		this.committed_tasks = new ArrayList<Demand>();
+		this.completed_tasks = new ArrayList<Demand>();
+		this.ledger = new Hashtable<UUID, Pair<Integer,ArrayList<SupplyImage>>>();
+		this.backlog_tasks = new ArrayList<Demand>();
+		
+		this.setSupplyDemandDictionary(Optional.empty());
+		
+		// PropertyChangeListener set-up
+		this.support = new PropertyChangeSupport(this);
+ 	}
 
 	// member variables
 	protected UUID id;        // universal unique id
 	protected String name;    // agent name
-	protected int efficiency; // agent efficiency	
-	protected boolean busy;   // is agent occupied?
+	protected int efficiency; // agent efficiency
 	
-	// keep track of event time since started
-	protected int count;
+	protected AgentState state; // agent state
 
-	// manage tasks assigned to agent
-	protected Optional<Demand> current_task;
-	protected int progress;
+	// list of Supply (resources, talent, skills)
+	protected ArrayList<Supply> resources;
 	
+	// track considered demands
+	protected ArrayList<UUID> seen_tasks;
+	
+	// task lists
+	protected ArrayList<Demand> committed_tasks; // officially completed and committed
+	protected ArrayList<Demand> completed_tasks; // completed but not committed
+	protected ArrayList<Demand> backlog_tasks;   // tasks not yet performed
+	
+	// look-up table for task completion times
+	protected Hashtable<UUID,Pair<Integer,ArrayList<SupplyImage>>> ledger; 
+	protected Optional<Demand> current_task;      // current active task
+		
+	// current "time" according to the agent
+	protected int agentTime;
+	
+	// time tolerance for "complete ahead" in one go
+	// trades off with risk of roll-backs
+	protected int horizonTime;
+	
+	// image of the Supplies before completing last task
+	//protected ArrayList<SupplyImage> supplyimgs;
+	
+	public int getHorizonTime() {
+		return horizonTime;
+	}
+	
+	public void setHorizonTime(int horizonTime) {
+		this.horizonTime = horizonTime;
+	}
+
 	// used for random number generation
 	protected Random rand;
-		
-	// list of Supply (resources, talent, skills)
-	public ArrayList<Supply> resources;
+
+	// used for messaging with DemandList
+	protected PropertyChangeSupport support;
 	
+	// use for lookups
+	protected Optional<SupplyDemandDictionary> sd_dict;
+
 	/*
 	 * Agent "interface" functions to be overridden in child class
 	 */
 	public void start(){
-		// to be implemented by child classes
-	}
-	public void step() {
-		// to be implemented by child classes
-	}
-	public void doSomething(DemandList d) {
-		// needs to be overloaded by child classes
+		// child Agent class functionality can override this function
+		System.out.println("Agent::Start "+this.getName());
 	}
 	
+	public void doSomething(PropertyChangeEvent evt) {
+
+		// child Agent class functionality can override this function
+		if(evt.getPropertyName()=="newdemand") {
+			//System.out.println(this.getName()+": alerted that a new demand has been issued...");
+
+			Demand d = (Demand)(evt.getNewValue());
+			
+			// only consider Demands that are not active or complete
+			if(d.getState() == DemandState.QUEUED) {
+				
+				// have I already considered this demand?
+				if (!this.alreadyConsidered(d)) {
+					
+					// check demand match
+ 					if(this.isDemandAchieveableANY(d, false)) {
+						this.addToBacklog(d);
+						System.out.println(this.getName()+" added demand to backlog");
+					}
+ 					else {
+ 						System.out.println(this.getName()+" cannot perform demand: "+d.toString());
+ 					}
+ 					
+ 					// mark as seen
+ 					this.seen_tasks.add(d.getId());
+				}
+			}
+		}
+		else if (evt.getPropertyName() == "collaborate") {
+			
+			//TODO check if I'm a worthy collaborator
+			
+			//TODO if so, do I need to rollback?  
+			
+			//TODO after rollback, proceed to executing collaboration Demand
+			
+		}
+		else if (evt.getPropertyName()=="commituntil") {
+			// commit any completed tasks up until timestamp provided
+			this._updateTaskLists((Integer)evt.getNewValue());
+		}
+		else {
+			System.err.println(this.getName()+" does not know how to manage event "+evt.getPropertyName());
+		}
+	}
+	
+	protected void _updateTaskLists(int committime) {
+		
+		// cycle through completed tasks
+	    Iterator<Demand> itr = completed_tasks.iterator();
+        while (itr.hasNext()) {
+        	Demand d = (Demand)itr.next();
+        	
+        	// if tasks were completed before new global time
+        	// mark as officially committed
+			if(ledger.get(d.getId()).getKey() <= committime) {
+				// move demand to committed_tasks
+				committed_tasks.add(d);
+				// remove from completed_tasks
+				itr.remove();
+			}
+        }
+	}
+	
+	protected void _rollBack(Demand d) {
+		// roll back progress to just before completing Demand d
+	
+		// NOTE: assumes rollback Demand is last demand completed!
+		// TODO: MANAGE ROLL-BACK OF MULTIPLE TASKS
+		
+		if(this.completed_tasks.contains(d)) {
+			
+			// remove from completed task list
+			this.completed_tasks.remove(d);
+			
+			// roll back Supply impacts
+			Pair<Integer,ArrayList<SupplyImage>> p = ledger.get(d.getId());
+			for (SupplyImage si : p.getValue()) {
+				
+				// find matching Supply
+				for (Supply s : this.resources) {
+					if(s.getId() == si.id) {
+						
+						// reset "image" of Supply
+						si.ReimageSupply(s);
+					}
+				}
+			}
+			
+			// reset local time by adding back time expended
+			this.setAgentTime(this.getAgentTime()-p.getKey());
+			
+			// remove from ledger
+			ledger.remove(d.getId());
+			
+			// add back to backlog
+			this.addToBacklog(d);
+		}
+	}
+
 	/*
 	 * PropertyChangeListener interface functions
 	 */
 	@Override
 	public void propertyChange(PropertyChangeEvent evt) {
-		if(evt.getPropertyName()=="Step") {
-			System.out.println("Agent "+this.getName()+": notices time has passed...");
-			this.step();
-		}
-		else if(evt.getPropertyName()=="newdemand") {
-			System.out.println("Agent "+this.getName()+": notices a demand has been added to the demand list...");
-			this.doSomething((DemandList)(evt.getNewValue()));
-		}
+		this.doSomething(evt);
 	}
 	
 	/* 
 	 * Convenience Functions
 	 */
-	// return true if Demand can be met with existing Supplies and efficiency
-	// i.e., answer the question, "Can I do this?"
-	//
-	// NOTE: this is a more specific validation than the isDemandValid function in 
-	// the SupplyDemandDictionary class
-	//
-	// ASSUMPTION: demand effort is equal across all supply needs
-	public boolean demandValid(Demand d, SupplyDemandDictionary sdd) {
+	public boolean alreadyConsidered(Demand d) {
+		return this.seen_tasks.contains(d.getId());
+	}
+	
+	public void addToBacklog(Demand d) {
+		this.backlog_tasks.add(d);
+	}
+	
+	public void addPropertyChangeListener(PropertyChangeListener pcl) {
+		this.support.addPropertyChangeListener(pcl);
+	}
+	
+	/*
+	 * single function to check for any supply/demand matches
+	 * or check if demand can be accomplished immediately
+	 * 
+	 */
+	public boolean isDemandAchieveableANY(Demand d, boolean checkamt) {
 		
-		// cursory check: do I have the supplies to meet this demand?
-		// TODO: if not, can I put a call out for another Agent who can help?
-		if(!sdd.isValidMatch(d.getType(), this.getResources())){
+		// get list of supplies required
+		if(this.sd_dict.isEmpty())
 			return false;
-		}
-		// cycle through supplies
-		for (Supply s : this.resources){
-			
-			System.out.println("..checking against Supply: "+s.getName());
-			
-			if(sdd.isValidMatch(d.getType(), s)){
-			
-				System.out.println("...checking against SupplyType "+s.getType().toString());
+		ArrayList<Pair<SupplyType,SupplyQuality>> reqsupp = this.getSupplyDemandDictionary().get().getRequiredSupplies(d.getType());
+
+		boolean matchedone = false;
+		// consider required supplies
+		for (Pair<SupplyType,SupplyQuality> p : reqsupp) {
+
+			for (Supply s: this.resources){ // match to supplies on-hand
 				
-				// use supply amount and compare to demand effort
-				if(s.getAmount() >= d.getEffort()) {
-					System.out.println("...agent has enough remaining capacity!");
+				if (s.getType() == p.getKey()) { // type matches
 					
-					// check if available or expired...
-					if(s.isUsable()) {
-						System.out.println("...and supply is usable (not expired)!");
-						return true;
+					if(s.getQuality().ordinal() >= p.getValue().ordinal()){ // quality is good enough
+
+						// deep check considers if enough supply is present
+						if (checkamt == true) {
+							
+							if (s.isUsable()) {// non-expired and replenishment checked
+							
+								if(s.getAmount() >= d.getEffort()) {
+									// found a match
+									matchedone = true;
+									break;
+								}
+							}
+						}
+						// shallow check only cares if matching supplies are present
+						else {
+							// found a match
+							matchedone = true;
+							break;
+						}
 					}
-					else {
-						System.out.println("...BUT supply is not usable.");
-					}
-				}
-				else {
-				System.out.println("...BUT agent does not have enough remaining capacity. demand effort="+
-									String.valueOf(d.getEffort())+
-									", agent capacity="+String.valueOf(s.getAmount()));
 				}
 			}
-		}
 			
-		return false;
+			if(matchedone) break;
+		}
+		
+		return matchedone;
+	}
+	
+	/*
+	 * single function to check for all supply/demand matches
+	 * or check if demand can be accomplished immediately
+	 * 
+	 */
+	public boolean isDemandAchieveableALL(Demand d, boolean checkamt) {
+		
+		// get list of supplies required
+		if(this.sd_dict.isEmpty())
+			return false;
+		ArrayList<Pair<SupplyType,SupplyQuality>> reqsupp = this.getSupplyDemandDictionary().get().getRequiredSupplies(d.getType());
+		
+		// consider required supplies
+		boolean matchedall = true;
+		for (Pair<SupplyType,SupplyQuality> p : reqsupp) {
+
+			boolean matchedone = false;
+			for (Supply s: this.resources){ // match to supplies on-hand
+				
+				if (s.getType() == p.getKey()) { // type matches
+				
+					if(s.getQuality().ordinal() >= p.getValue().ordinal()){ // quality is good enough
+
+						// deep check considers if enough supply is present
+						if (checkamt == true) {
+							
+							if (s.isUsable()) {// non-expired and replenishment checked
+							
+								if(s.getAmount() >= d.getEffort()) {
+									// found a match
+									matchedone = true;
+									break;
+								}
+							}
+						}
+						// shallow check only cares if matching supplies are present
+						else {
+							// found a match
+							matchedone = true;
+							break;
+						}
+					}
+				}
+			}
+			
+			matchedall &= matchedone;	
+			if (!matchedall) {
+				break;	
+			}
+		}
+		
+		return matchedall;
+	}
+	
+	/*
+	 * Update amount of remaining supply after completing Demand
+	 * 
+	 */
+	protected boolean _expendEffort(Demand d, int effort, ArrayList<SupplyImage> snapshot) {
+		
+		// get list of supplies required
+		ArrayList<Pair<SupplyType,SupplyQuality>> reqsupp = 
+				this.getSupplyDemandDictionary().get().getRequiredSupplies(d.getType());
+		
+		boolean success = true;
+		
+		// consider all required supplies
+		for (Pair<SupplyType,SupplyQuality> p : reqsupp) {
+
+			// cycle through all of this agent's supplies
+			for (Supply s: this.resources){
+				
+				// match on type and quality
+				if ((s.getType() == p.getKey()) && (s.getQuality().ordinal() >= p.getValue().ordinal())) {
+					
+					// found case where random efficiency issues resulted in too much effort!
+					if(s.getAmount() < effort) {
+						success = false;
+					}
+					
+					// add a record of current Supply state (for potential roll-back)
+					snapshot.add(new SupplyImage(s));
+					
+					// expend actual effort (which is >= amount in Demand d)
+					s.reduceAmount(effort);
+					break;
+				}
+			}
+		}	
+		
+		// return actual effort expended
+		return success;
+	}
+	
+	// use backlog to select next task
+	protected boolean completeNextTask() {
+		if(!this.backlog_tasks.isEmpty()) {
+			
+			// TODO: use alternate selection criteria on backlog
+			
+	        // sort demands by priority
+	    	Collections.sort(this.backlog_tasks, new Comparator<Demand>() {
+	    		public int compare(Demand d1, Demand d2) {
+	    			int result = d1.getPriority().compareTo(d2.getPriority());
+	    			return -result; // return reverse order (high priority first)
+	    		}
+	    	});
+			
+			this.setCurrenttask(Optional.of(this.backlog_tasks.get(0)));
+			return this.completeTask();
+		}
+		return true;
 	}
 	
 	// start handling a Demand
-	protected void startNewDemand(Demand d) {
-		this.setBusy(true);
-		this.setProgress(0);
+	protected boolean completeTask() {
 		
-		d.setActive(); // mark task as started by an agent
-		this.setCurrentTask(Optional.of(d));
-
-		System.out.println("Agent "+this.getName()+" has started task "+d.toString());
-	}
-	
-	// make progress on Demand
-	protected void setIncrementalProgress() {
-		// update progress
-		this.setProgress(this.getProgress()+1);
-
-		// check progress against demand
-		if (!this.getCurrentTask().isEmpty()) {
-			if(this.getProgress() >= this.getCurrentTask().get().getEffort()) {
-				// demand is complete!
-				this.finishDemand();
-			}
+		// fail fast
+		if(this.getCurrenttask().isEmpty()) {
+			return false;
 		}
-	}
-	
-	// wrap up a Demand
-	protected void finishDemand() {
-		// access Demand
-		Demand d = this.getCurrentTask().get();
-		d.setComplete();
-		System.out.println("Agent "+this.getName()+" has completed task "+d.toString());
 		
-		// clear out variables
-		this.setCurrentTask(Optional.empty());
-		this.setProgress(-1);
-		this.setBusy(false);
+		Demand d = this.getCurrenttask().get();
+		d.setActive(); // mark task as started by an agent
+		
+		this.setCurrenttask(Optional.of(d));
+		System.out.println("Agent "+this.getName()+" has started task "+d.toString());
+		
+		// RANDOMNESS/UNCERTAINTY
+		// leverage efficiency to represent un-productive time
+		int totaleffort = 0;
+		for (int i = 0; i < d.getEffort(); totaleffort++, i++) {
+			if (this.getEfficiency() < rand.nextInt(101)) totaleffort++; // add extra effort randomly 
+		}
+		
+		ArrayList<SupplyImage> snapshot = new ArrayList<SupplyImage>();
+		
+		// update resources based on demand
+		if(this._expendEffort(d, totaleffort,snapshot)) {		
+			// move demand to cleared list
+			this.backlog_tasks.remove(d);
+			this.completed_tasks.add(d);
+			this.ledger.put(d.getId(),new Pair<Integer,ArrayList<SupplyImage>>(totaleffort,snapshot));
+			this.setCurrenttask(Optional.empty());
+		}
+		else {
+			System.out.println("...failed to complete task");
+			return false;
+		}
+
+		System.out.println("...time needed to complete task: "+totaleffort);
+		return true;
 	}
 	
 	/*
@@ -224,105 +487,43 @@ public class Agent implements PropertyChangeListener {
 		resources.addAll(rsrcs);
 	}
 	
-	public boolean isBusy() {
-		return busy;
+	public ArrayList<Demand> getCompletedtasks() {
+		return completed_tasks;
 	}
 	
-	public void setBusy(boolean busy) {
-		this.busy = busy;
+	public int getAgentTime() {
+		return agentTime;
 	}
 	
-	public int getCount() {
-		return count;
+	public void setAgentTime(int agentTime) {
+		this.agentTime = agentTime;
 	}
-
-	public void setCount(int count) {
-		this.count = count;
-	}
-
-	public Optional<Demand> getCurrentTask() {
+	
+	public Optional<Demand> getCurrenttask() {
 		return current_task;
 	}
-
-	public void setCurrentTask(Optional<Demand> task) {
-		this.current_task = task;
+	
+	public void setCurrenttask(Optional<Demand> current_task) {
+		this.current_task = current_task;
 	}
 	
-	public int getProgress() {
-		return progress;
-	}
-
-	public void setProgress(int progress) {
-		this.progress = progress;
+	public Optional<SupplyDemandDictionary> getSupplyDemandDictionary() {
+		return sd_dict;
 	}
 	
-	/*
-	 * public static void main(String args[]) {
-	 * 
-	 * // create dictionary for matching skills with needs SupplyDemandDictionary
-	 * sdd = new SupplyDemandDictionary();
-	 * 
-	 * // define what demands and supplies match with each other
-	 * sdd.addSupplyDemand(DemandType.NEED1,SupplyType.SKILL1);
-	 * sdd.addSupplyDemand(DemandType.NEED2,SupplyType.SKILL2);
-	 * sdd.addSupplyDemand(DemandType.NEED2,SupplyType.SKILL3);
-	 * sdd.addSupplyDemand(DemandType.NEED2,SupplyType.SKILL4);
-	 * sdd.addSupplyDemand(DemandType.NEED3,SupplyType.SKILL3);
-	 * sdd.addSupplyDemand(DemandType.NEED4,SupplyType.SKILL1);
-	 * sdd.addSupplyDemand(DemandType.NEED4,SupplyType.SKILL4);
-	 * 
-	 * System.out.println(sdd.toString());
-	 * 
-	 * // define 3 agents Agent geo = new Agent("Geologist",50); Agent eng = new
-	 * Agent("Engineer",75); Agent mgr = new Agent("Manager",25);
-	 * 
-	 * // give them skills with capacity is in seconds Supply skill_interp = new
-	 * Supply("interp", SupplyType.SKILL1, 10, SupplyQuality.HIGH); Supply
-	 * skill_assess = new Supply("assess", SupplyType.SKILL2, 20,
-	 * SupplyQuality.MEDIUM); Supply skill_lead = new Supply("lead",
-	 * SupplyType.SKILL3, 25, SupplyQuality.MEDIUM);
-	 * 
-	 * // assign skills to agents geo.rsrcs.add(skill_interp);
-	 * eng.rsrcs.add(skill_assess); mgr.rsrcs.add(skill_lead);
-	 * 
-	 * // add them to a list (pooled agent resources) ArrayList<Agent> agentList =
-	 * new ArrayList<Agent>(); agentList.add(geo); agentList.add(eng);
-	 * agentList.add(mgr);
-	 * 
-	 * // define some demands Demand demand_interp = new Demand("interp",
-	 * DemandPriority.HIGH, DemandType.NEED1, 8); Demand demand_assess = new
-	 * Demand("assess", DemandPriority.MEDIUMHIGH, DemandType.NEED2, 10); Demand
-	 * demand_lead = new Demand("lead", DemandPriority.MEDIUMLOW, DemandType.NEED3,
-	 * 30);
-	 * 
-	 * // add demands to list ArrayList<Demand> demandList = new
-	 * ArrayList<Demand>(); demandList.add(demand_interp);
-	 * demandList.add(demand_assess); demandList.add(demand_lead);
-	 * 
-	 * // READY TO ROCK & ROLL!
-	 * 
-	 * // TODO: consider Demands that require more than 1 Supply // TODO: add logic
-	 * around subordinate Demand checks when determining Agent match
-	 * 
-	 * // sort Demands by priority Collections.sort(demandList, new
-	 * Comparator<Demand>() { public int compare(Demand d1, Demand d2) { int result
-	 * = d1.getPriority().compareTo(d2.getPriority()); return -result; // return
-	 * reverse order (high priority first) } });
-	 * 
-	 * // cycle through demand list and find agents to handle them for (Demand d:
-	 * demandList) { System.out.println("Found a new Demand: "+d.toString());
-	 * 
-	 * boolean matched = false; // look for a matching agent for (Agent a:
-	 * agentList) {
-	 * System.out.println(".looking for match with Agent: "+a.getName());
-	 * 
-	 * if(a.demandValid(d, sdd)) { String thumb = "\uD83D\uDC4D";
-	 * System.out.println(thumb+" Found a match! Agent being assigned Demand: "+
-	 * d.toString()+"\n");
-	 * 
-	 * // TODO: update Agent state, somewhere update Demand matched = true; break; }
-	 * } if(matched == false) {
-	 * System.out.println("X no agent is able to handle Demand: "+d.toString()+"\n")
-	 * ; } } }
-	 */
+	public void setSupplyDemandDictionary(SupplyDemandDictionary sdd) {
+		this.sd_dict= Optional.of(sdd);
+	}
+	
+	public void setSupplyDemandDictionary(Optional<SupplyDemandDictionary> sd_dict) {
+		this.sd_dict = sd_dict;
+	}
+	
+	public AgentState getState() {
+		return state;
+	}
+	
+	public void setState(AgentState state) {
+		this.state = state;
+	}
 }
