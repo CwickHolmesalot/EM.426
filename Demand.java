@@ -34,6 +34,35 @@ import javafx.beans.property.StringProperty;
  *  
  */
 public class Demand implements IDemand {
+	private static final double COLLAB_FACTOR = 0.1;
+	private static final int DEFAULT_EFFORT = 30;
+	private static final int DEFAULT_START = 0;
+	private static final int DEFAULT_STOP = 12*3600;
+	private static final boolean DEFAULT_RECUR = false;
+	private static final int DEFAULT_EVERY = -1;
+	private static final int DEFAULT_UNTIL = -1;
+	
+	/* 
+	 * Collaboration Demand factory
+	 */
+	public static Demand createCollaborationDemand(Demand d, Agent a) {
+		Demand collab = new Demand(UUID.randomUUID(),
+								  d.getName()+"_Collab",
+								  DemandPriority.HIGH,
+								  DemandType.COLLABORATE,
+								  DemandState.DEFINED,
+								  (int)(d.getEffort()*COLLAB_FACTOR)+1, // always >0
+								  DEFAULT_START,
+								  DEFAULT_STOP,
+								  DEFAULT_RECUR, 
+								  DEFAULT_EVERY,
+								  DEFAULT_UNTIL);
+		collab.setAncillaryDemand(d);
+		collab.setCreator(a);
+		collab.setPartial(d.getPartial());
+		return collab;
+	}
+	
 	/* 
 	 * Demand Constructors
 	 */
@@ -47,7 +76,10 @@ public class Demand implements IDemand {
 	 * all other values use Basic constructor defaults 
 	 */
 	public Demand() {
-		this(DemandType.NEED1, 30, 0, 12*3600);
+		this(DemandType.NEED1, 
+			DEFAULT_EFFORT,
+			DEFAULT_START,
+			DEFAULT_STOP);
 	}
 	
 	/* 
@@ -64,8 +96,17 @@ public class Demand implements IDemand {
 	 * every, until set to -1
 	 */
 	public Demand(DemandType type, int effort, int start, int stop) {
-		this(UUID.randomUUID(), "", DemandPriority.MEDIUM, type, DemandState.DEFINED,
-				effort, start, stop, false, -1, -1);
+		this(UUID.randomUUID(),
+			 "", 
+			 DemandPriority.MEDIUM, 
+			 type, 
+			 DemandState.DEFINED,
+			 effort, 
+			 start, 
+			 stop, 
+			 DEFAULT_RECUR,
+			 DEFAULT_UNTIL,
+			 DEFAULT_EVERY);
 	}
 	
 	/* 
@@ -82,8 +123,17 @@ public class Demand implements IDemand {
 	 * every, until set to -1
 	 */
 	public Demand(String name, DemandPriority priority, DemandType type, int effort) {
-		this(UUID.randomUUID(), name, priority, type, DemandState.DEFINED,
-				effort, 0, 3600, false, -1, -1);
+		this(UUID.randomUUID(), 
+			name, 
+			priority,
+			type,
+			DemandState.DEFINED,
+			effort,
+			DEFAULT_START,
+			DEFAULT_STOP,
+			DEFAULT_RECUR,
+			DEFAULT_UNTIL,
+			DEFAULT_EVERY);
 	}
 	
 	/*
@@ -106,6 +156,10 @@ public class Demand implements IDemand {
 		
 		//this.startdate = startdate;
 		//this.completedate = completedate;
+		
+		this.ancillaryDemand = Optional.empty();
+		this.creator = Optional.empty();
+		this.partial = new Hashtable<SupplyType,Integer>();
 	}
 
 	/* 
@@ -138,6 +192,15 @@ public class Demand implements IDemand {
 	// key milestone time stamps
 	private LocalDate startdate;
 	private LocalDate completedate;
+	
+	// associated demand
+	public Optional<Demand> ancillaryDemand;
+	
+	// capture agent who created demand (if any)
+	public Optional<Agent> creator;
+	
+	// manage partial completeness of Demand 
+	public Hashtable<SupplyType,Integer> partial;
 	
 	/* 
 	 * Getters and Setters	
@@ -215,6 +278,17 @@ public class Demand implements IDemand {
 	public LocalDate getCompletedate() { return completedate; }
 	public void setCompletedate(LocalDate completedate) { this.completedate = completedate; }
 	
+	
+	// ANCILLARYDEMAND ------------------------
+	public void setAncillaryDemand(Demand d) { this.ancillaryDemand = Optional.of(d); }
+	
+	// CREATOR --------------------------------
+	public void setCreator(Agent a) { this.creator = Optional.of(a); }
+	
+	// PARTIAL --------------------------------
+	public Hashtable<SupplyType, Integer> getPartial() { return partial; }
+	public void setPartial(Hashtable<SupplyType, Integer> partial) { this.partial = partial; }
+	
 	// class logger
 	//private static final Logger logger = Logger.getLogger(Demand.class.getName());
 		
@@ -239,6 +313,9 @@ public class Demand implements IDemand {
 	}
 	public void setComplete() {
 		this.setState(DemandState.COMPLETE);
+	}	
+	public void setPartial() {
+		this.setState(DemandState.PARTIAL);
 	}
 	
 	// convenience functions for checking demand state

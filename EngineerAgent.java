@@ -19,7 +19,7 @@ public class EngineerAgent extends Agent implements PropertyChangeListener {
 	}
 	
 	public EngineerAgent(String name) {
-		this(name, 75);
+		this(name, 95);
 	}
 	
 	public EngineerAgent(String name, int efficiency) {

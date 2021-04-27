@@ -19,7 +19,7 @@ public class ScienceAgent extends Agent implements PropertyChangeListener {
 	}
 	
 	public ScienceAgent(String name) {
-		this(name, 75);
+		this(name, 90);
 	}
 	
 	public ScienceAgent(String name, int efficiency) {

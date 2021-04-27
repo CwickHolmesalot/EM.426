@@ -10,5 +10,5 @@
  *  to for logical matching with SupplyTypes
  */
 public enum DemandType {
-	NEED1, NEED2, NEED3, NEED4, NEED5
+	NEED1, NEED2, NEED3, NEED4, NEED5, COLLABORATE
 }

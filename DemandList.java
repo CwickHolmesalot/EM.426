@@ -80,13 +80,18 @@ public class DemandList implements Iterable<Demand> {
      * Events
      */
     public void newDemand(Demand d) {
-    	System.out.println("***DemandList triggering a new demand notification***");
+    	newDemand(d,true);
+    }
+    public void newDemand(Demand d, boolean alert_agents) {
     	
     	// add demand to the demand list
     	d.setQueued();
         this.demand_list.add(d);
     	
     	// signal the demand list has changed
-        support.firePropertyChange("newdemand", this, d);
+        if(alert_agents) {
+        	System.out.println("***DemandList triggering a new demand notification***");
+        	support.firePropertyChange("newdemand", this, d);
+        }
     }
 }

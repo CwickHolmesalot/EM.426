@@ -20,7 +20,7 @@ public class ManagerAgent extends Agent implements PropertyChangeListener {
 	}
 	
 	public ManagerAgent(String name) {
-		this(name, 60);
+		this(name, 85);
 	}
 	
 	public ManagerAgent(String name, int efficiency) {
