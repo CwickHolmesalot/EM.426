@@ -160,7 +160,7 @@ public class SimEnvironment implements PropertyChangeListener {
 	// randomly choose whether or not to generate a new Demand
 	public void createRandomDemand(int pcntchance) {
 		
-		if(!this.collab_requests.isEmpty()) {
+		while(!this.collab_requests.isEmpty()) {
 			// generate a new Demand
 			demand_list.newDemand(Demand.createCollaborationDemand((Demand)(collab_requests.get(0).getOldValue()),
 																   (Agent)(collab_requests.get(0).getNewValue())));

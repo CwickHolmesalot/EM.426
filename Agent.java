@@ -192,6 +192,33 @@ public class Agent implements PropertyChangeListener {
 		this.interactions.put(collaborator.getId(),prevval+1);
 	}
 	
+	protected void finishCollaboration(Agent collaborator, Demand d, int collab_effort) {
+		
+		// mark a collaboration
+		this.updateInteractions(collaborator);
+		
+		// mark Demand as complete
+		d.ancillaryDemand.get().setComplete();
+		d.setComplete();
+		
+		// log shared Demand and Collaboration Demand
+		this.backlog_tasks.remove(d.ancillaryDemand.get());
+		this.completed_tasks.add(d.ancillaryDemand.get());
+		this.completed_tasks.add(d);
+		
+		// move local time forward from collaboration
+		this.updateAgentTime(collab_effort);
+		
+		// add collaboration to ledger
+		this.ledger.put(d.getId(),
+				new Pair<Integer,ArrayList<SupplyImage>>(this.getAgentTime(),
+						new ArrayList<SupplyImage>()));
+		
+		// reset Agent
+		this.setCurrenttask(Optional.empty());
+		this.setState(AgentState.ACTIVE);
+	}
+	
 	// commit any completed tasks that were completed before committime
 	protected void _updateTaskLists(int committime) {
 		
@@ -220,11 +247,9 @@ public class Agent implements PropertyChangeListener {
 		_rollBack(d, true);
 	}
 	protected void _rollBack(Demand d, boolean isCompleted) {
-		// roll back progress to just before completing Demand d
-	
-		// NOTE: assumes rollback Demand is last demand completed!
-		// TODO: MANAGE ROLL-BACK OF MULTIPLE TASKS
 		
+		// roll back progress to just before completing Demand d
+		// NOTE: assumes rollback Demand is last demand completed!
 		if(isCompleted) {
 			if(this.completed_tasks.contains(d)) {
 				// remove from completed task list
@@ -310,6 +335,11 @@ public class Agent implements PropertyChangeListener {
 		if(reqsupp != null) {
 			// consider required supplies
 			for (Pair<SupplyType,SupplyQuality> p : reqsupp) {
+				
+				// has this supply been handled already (e.g. COLLABORATION)
+				if (d.getPartial().containsKey(p.getKey())) {
+					continue;
+				}
 	
 				for (Supply s: this.resources){ // match to supplies on-hand
 					
@@ -349,19 +379,30 @@ public class Agent implements PropertyChangeListener {
 	/*
 	 * single function to check for all supply/demand matches
 	 * or check if demand can be accomplished immediately
-	 * 
 	 */
 	public boolean isDemandAchieveableALL(Demand d, boolean checkamt) {
 		
 		// get list of supplies required
 		if(this.sd_dict.isEmpty())
 			return false;
-		ArrayList<Pair<SupplyType,SupplyQuality>> reqsupp = this.getSupplyDemandDictionary().get().getRequiredSupplies(d.getType());
+		
+		ArrayList<Pair<SupplyType,SupplyQuality>> reqsupp;
+		if(d.getType()==DemandType.COLLABORATE) {
+			reqsupp = this.getSupplyDemandDictionary().get().getRequiredSupplies(d.ancillaryDemand.get().getType());
+		}
+		else {
+			reqsupp = this.getSupplyDemandDictionary().get().getRequiredSupplies(d.getType());
+		}
 		
 		// consider required supplies
 		boolean matchedall = true;
 		for (Pair<SupplyType,SupplyQuality> p : reqsupp) {
-
+			
+			// has this supply been handled already (e.g. COLLABORATION)
+			if (d.getPartial().containsKey(p.getKey())) {
+				continue;
+			}
+			
 			boolean matchedone = false;
 			for (Supply s: this.resources){ // match to supplies on-hand
 				
@@ -410,6 +451,7 @@ public class Agent implements PropertyChangeListener {
 		ArrayList<Pair<SupplyType,SupplyQuality>> reqsupp;
 		
 		if(d.getType()==DemandType.COLLABORATE) {
+			this.setState(AgentState.COMMUNICATING);
 			reqsupp = this.getSupplyDemandDictionary().get().getRequiredSupplies(d.ancillaryDemand.get().getType());
 		}
 		else {
@@ -548,22 +590,32 @@ public class Agent implements PropertyChangeListener {
 				ArrayList<SupplyImage> snapshot = new ArrayList<SupplyImage>();
 				
 				// update resources based on demand
-				if(this._expendEffort(d, collab_effort, snapshot)) {	
-					// consider Demand completed
-					d.setComplete();
+				if(this._expendEffort(d, d.ancillaryDemand.get().getEffort(), snapshot)) {	
 						
 					// move demand to cleared list
 					this.backlog_tasks.remove(d);
+					this.completed_tasks.add(d.ancillaryDemand.get());
 					this.completed_tasks.add(d);
+					
+					// update local time and add to ledger
+					this.updateAgentTime(d.ancillaryDemand.get().getEffort());
+					this.ledger.put(d.ancillaryDemand.get().getId(),
+							new Pair<Integer,ArrayList<SupplyImage>>(this.getAgentTime(), snapshot));
+
+					// add demand and collaboration to ledger
 					this.updateAgentTime(collab_effort);
-					this.ledger.put(d.getId(),new Pair<Integer,ArrayList<SupplyImage>>(collab_effort, snapshot));
+					this.ledger.put(d.getId(),
+							new Pair<Integer,ArrayList<SupplyImage>>(this.getAgentTime(), 
+									new ArrayList<SupplyImage>()));
+					
 					this.setCurrenttask(Optional.empty());
 				}
 
 				// update list for myself and collaborator
 				this.updateInteractions(d.creator.get());
-				d.creator.get().updateInteractions(this);
+				d.creator.get().finishCollaboration(this,d,collab_effort);
 				
+				System.out.println("...time needed to complete task: "+d.ancillaryDemand.get().getEffort());
 				System.out.println("...time needed to collaborate: "+collab_effort);
 			}
 			else {
@@ -593,18 +645,26 @@ public class Agent implements PropertyChangeListener {
 						// move demand to cleared list
 						this.backlog_tasks.remove(d);
 						this.completed_tasks.add(d);
-						this.updateAgentTime(totaleffort);
-						this.ledger.put(d.getId(),new Pair<Integer,ArrayList<SupplyImage>>(totaleffort,snapshot));
 						this.setCurrenttask(Optional.empty());
 					}
+
+					// make note of work completed (even if only PARTIAL and waiting...)
+					this.updateAgentTime(totaleffort);
+					this.ledger.put(d.getId(),
+							new Pair<Integer,ArrayList<SupplyImage>>(this.getAgentTime(),snapshot));
 				}
 				else {
 					System.out.println("...failed to complete task");
 					
 					// can't complete task
 					// treat like completed, then instantly roll-back
+					
+					
+					// *********FIXME - check ledger line***************
+					
 					this.backlog_tasks.remove(d);
-					this.ledger.put(d.getId(),new Pair<Integer,ArrayList<SupplyImage>>(totaleffort,snapshot));
+					this.ledger.put(d.getId(),
+							new Pair<Integer,ArrayList<SupplyImage>>(totaleffort,snapshot));
 					this.setCurrenttask(Optional.empty());
 					
 					// fix any changes to Supplies during failed attempt
