@@ -4,7 +4,7 @@ import java.beans.PropertyChangeSupport;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.Optional;
+//import java.util.Optional;
 import java.util.Random;
 import java.lang.Integer;
 
@@ -31,13 +31,14 @@ public class SimEnvironment implements PropertyChangeListener {
 	 */
 	private DemandList demand_list; // list of demands
 	private Random rand;
-	
+		
 	// keep track of Agents here so they don't get garbage collected
 	private ArrayList<Agent> agent_list;
 	private PropertyChangeSupport support;
 	
 	// to manage requests for collaboration
 	private ArrayList<PropertyChangeEvent> collab_requests;
+	private ArrayList<PropertyChangeEvent> resync_requests;
 	
 	// global (committed) time
 	private int global_time;
@@ -80,6 +81,9 @@ public class SimEnvironment implements PropertyChangeListener {
 		// no requests for collaboration yet
 		collab_requests = new ArrayList<PropertyChangeEvent>();
 		
+		// no resync requests yet
+		resync_requests = new ArrayList<PropertyChangeEvent>();
+		
 		// initialize environment
 		initialize();
 	}
@@ -110,9 +114,11 @@ public class SimEnvironment implements PropertyChangeListener {
 		
 		// define what demands and supplies match with each other
 		demand_list.addSupplyDemandPair(DemandType.NEED1,SupplyType.SKILL1);
+		demand_list.addSupplyDemandPair(DemandType.NEED2,SupplyType.SKILL1);
 		demand_list.addSupplyDemandPair(DemandType.NEED2,SupplyType.SKILL2);
 		demand_list.addSupplyDemandPair(DemandType.NEED3,SupplyType.SKILL2);
 		demand_list.addSupplyDemandPair(DemandType.NEED3,SupplyType.SKILL3);
+		demand_list.addSupplyDemandPair(DemandType.NEED3,SupplyType.SKILL4);
 		demand_list.addSupplyDemandPair(DemandType.NEED4,SupplyType.SKILL4);
 		demand_list.addSupplyDemandPair(DemandType.NEED5,SupplyType.SKILL4);
 		demand_list.addSupplyDemandPair(DemandType.NEED5,SupplyType.SKILL5);
@@ -145,6 +151,9 @@ public class SimEnvironment implements PropertyChangeListener {
 			dtype = rand.nextInt(DemandType.values().length);
 		
 		int dprior = rand.nextInt(DemandPriority.values().length);
+		// don't allow urgent demands to be created here (save those for collaboration)
+		while (dprior == DemandPriority.URGENT.ordinal())
+			dprior = rand.nextInt(DemandPriority.values().length);
 		
 		Demand newdemand = new Demand("Demand"+String.valueOf(demand_list.getDemandCount()),
 				DemandPriority.values()[dprior], 
@@ -160,39 +169,46 @@ public class SimEnvironment implements PropertyChangeListener {
 	// randomly choose whether or not to generate a new Demand
 	public void createRandomDemand(int pcntchance) {
 		
-		while(!this.collab_requests.isEmpty()) {
-			// generate a new Demand
-			demand_list.newDemand(Demand.createCollaborationDemand((Demand)(collab_requests.get(0).getOldValue()),
-																   (Agent)(collab_requests.get(0).getNewValue())));
-			
-			// reset collab_request
-			collab_requests.remove(0);
-		}
-		
 		// RANDOMNESS/UNCERTAINTY
 		if(rand.nextInt(100)<pcntchance) {
 			createDemand(true);
 		}
 	}
 	
+	// agent factory function
 	public void createAgents(int nEng, int nSci, int nMgr) {
 
-		for ( int e = 0; e < nEng; e++)
-			agent_list.add(new EngineerAgent("Engineer"+(e+1)));
+		for ( int e = 0; e < nEng; e++) {
+			Agent engAgent = new EngineerAgent("Engineer"+(e+1));
+			
+			// make engineers impatient for waiting
+			engAgent.setMaxWaitCycles(2);
+			
+			agent_list.add(engAgent);
+		}
+	
+		for ( int s = 0; s < nSci; s++) {
+			Agent sciAgent = new ScienceAgent("Scientist"+(s+1));
+			
+			// make scientists tolerant of waiting
+			sciAgent.setMaxWaitCycles(5);
+			
+			agent_list.add(sciAgent);
+		}
 		
-		for ( int s = 0; s < nSci; s++)
-			agent_list.add(new ScienceAgent("Scientist"+(s+1)));
-		
-		for ( int m = 0; m < nMgr; m++)
-			agent_list.add(new ManagerAgent("Manager"+(m+1)));
+		for ( int m = 0; m < nMgr; m++) {
+			Agent mgrAgent = new ManagerAgent("Manager"+(m+1));
+			
+			// make managers mildly tolerant of waiting
+			mgrAgent.setMaxWaitCycles(3);
+			
+			agent_list.add(mgrAgent);
+		}
 		
 		for (Agent a : agent_list) {
 			
 			// give agent the supply-demand map
 			a.setSupplyDemandDictionary(demand_list.getSupplyDemandDict());
-			
-			// randomly assign different horizon times to agents
-			a.setHorizonTime(rand.nextInt(100));
 			
 			// bind agents to property change supports
 			demand_list.addPropertyChangeListener(a);
@@ -204,6 +220,17 @@ public class SimEnvironment implements PropertyChangeListener {
 		}
 	}
 	
+	// print progress update to console
+	public void progressReport() {
+		System.out.println("------Progress Report-------");
+		System.out.println("Simulation Time: "+this.getGlobaltime()+"\n\n");
+		
+		for (Agent a : agent_list) {
+			System.out.println(a.toProgressString()+"\n");
+		}
+		System.out.println("--------End Report---------");
+	}
+	
 	@Override
 	public void propertyChange(PropertyChangeEvent evt) {
 		if(evt.getPropertyName() == "collaborate") {
@@ -211,24 +238,53 @@ public class SimEnvironment implements PropertyChangeListener {
 			// store collaboration request (captures who sent it)
 			this.collab_requests.add(evt);
 		}
+		else if(evt.getPropertyName() == "refresh_backlog") {
+			this.resync_requests.add(evt);
+		}
 		else {
 			System.err.println("SimEnvironment does not know how to manage event "+evt.getPropertyName());
 		}
  	}
+	
+	// manage various requests from the agents
+	public void manageRequests() {
+		while(!this.collab_requests.isEmpty()) {
+			// generate a new Demand
+			demand_list.newDemand(Demand.createCollaborationDemand((Demand)(collab_requests.get(0).getOldValue()),
+																   (Agent)(collab_requests.get(0).getNewValue())));
+			
+			// reset collab_request
+			collab_requests.remove(0);
+		}
+		
+		// manage resync requests for demandlist
+		while(!this.resync_requests.isEmpty()) {
+			Agent a = (Agent)(resync_requests.get(0).getNewValue());
+			a.refreshBacklog(this.demand_list);
+			resync_requests.remove(0);
+		}
+	}
 
 	// Time management signals
     public void syncGlobalTime() {
-
+    	
     	// tell agents to finish up their tasks
         support.firePropertyChange("finishtask", 0, 1);
     	
     	int  min_time = Integer.MAX_VALUE;
     	
+    	// randomize agent order
+    	this.sortAgents();
+   	
     	// check all agents to identify min local time
 		for (Agent a : this.agent_list) {
 			if(a.getAgentTime() < min_time) {
 				min_time = a.getAgentTime();
 			}
+			
+			// remove and add again to change agent order in support
+	    	support.removePropertyChangeListener(a);
+			support.addPropertyChangeListener(a);
 		}
     	
     	// update all agents to solidify completed tasks
@@ -240,6 +296,10 @@ public class SimEnvironment implements PropertyChangeListener {
 	
 	public static void main(String args[]) {
 				
+		/****** CONTROLS ******/
+		int NEW_DEMAND_PROB = 20;
+		
+		
 		/****** CREATE ENVIRONMENT ******/
 		SimEnvironment sim = new SimEnvironment();
 
@@ -249,7 +309,7 @@ public class SimEnvironment implements PropertyChangeListener {
 		}
 		
 		/****** DEFINE AGENTS ******/
-		sim.createAgents(2,2,1);
+		sim.createAgents(1,1,1);
 		
 		/*
 		 * Start simulation
@@ -257,12 +317,12 @@ public class SimEnvironment implements PropertyChangeListener {
 		for (int i = 0; i < 300; i++) {			
 			
 			/****** GENERATE DEMANDS ******/
-			sim.createRandomDemand(50);
+			sim.createRandomDemand(NEW_DEMAND_PROB);
 			
 			try
 			{
 				// pause before next time step
-			    Thread.sleep(1000);
+			    Thread.sleep(1);
 			}
 			catch(InterruptedException ex)
 			{
@@ -271,8 +331,23 @@ public class SimEnvironment implements PropertyChangeListener {
 			    break;
 			}
 			
+			// manage agent requests
+			sim.manageRequests();
+			
 			// update simulation global time
 	        sim.syncGlobalTime();
+	        
+	        // report out progress
+	        if(i%25 == 0) {
+	        	
+	        	// report out on progress
+	        	sim.progressReport();
+	        	try { Thread.sleep(2000);}
+	        	catch(InterruptedException ex)
+				{ 
+	        		// do nothing
+				}
+	        }
 		}
 	}
 }

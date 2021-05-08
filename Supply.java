@@ -31,24 +31,30 @@ import javafx.beans.property.SimpleLongProperty;
 
 public class Supply implements ISupply {
 	
-	static public final int DAYVAL = 60*60*24;
-	static public final int HOURVAL = 60*60;
-	static public final int WEEKVAL = 60*60*24*7;
-	static public final int YEARVAL = 60*60*24*365;
-	static public final int MONTHVAL = 60*60*24*365/12; // average over a year
+//	static public final int DAYVAL = 60*60*24;
+//	static public final int HOURVAL = 60*60;
+//	static public final int WEEKVAL = 60*60*24*7;
+//	static public final int YEARVAL = 60*60*24*365;
+//	static public final int MONTHVAL = 60*60*24*365/12; // average over a year
+	
+	static private final SupplyQuality DEFAULT_QUALITY = SupplyQuality.MEDIUM;
+	static private final int DEFAULT_CAPACITY = 9999;
+	static private final int DEFAULT_EFFICIENCY = 85;
+	static private final int DEFAULT_LIFESPAN = 9999;
+	static private final int DEFAULT_EVERY = 1;
+	static private final int DEFAULT_UNTIL = 9999;
+	
+	static private final int DEFAULT_REPLENISH_TIME = 8; // assume full working day to "refresh"
 	
 	/* 
 	 * Supply constructors
 	 */
 	
 	/*
-	 * DEFAULT constructor:
-	 * type set to RAW_MATERIALS
-	 * capacity (in time units) set to 100 seconds
-	 * all other values use Basic constructor defaults 
+	 * DEFAULT constructor: 
 	 */
 	public Supply() {
-		this(SupplyType.SKILL1, 100);
+		this(SupplyType.SKILL1, DEFAULT_CAPACITY);
 	}
 	
 	/* 
@@ -57,15 +63,17 @@ public class Supply implements ISupply {
 	 * identifier set to empty string
 	 * type set to input type value
 	 * capacity set to input capacity value
-	 * quality set to MEDIUM
-	 * efficiency set to 85 (%)
-	 * lifespan set to 9999 seconds
-	 * replenish set to false
-	 * every nominally set to 1
-	 * until set to timestamp 0L
+	 * replenish set to true
+	 * quality, efficiency, lifespan, every, until set to defaults
 	 */
 	public Supply(SupplyType type, int capacity) {
-		this(UUID.randomUUID(), "", type, capacity, SupplyQuality.MEDIUM, 85, 9999, false, 1, 0L);
+		this(UUID.randomUUID(), "", type, capacity, 
+				Supply.DEFAULT_QUALITY,
+				Supply.DEFAULT_EFFICIENCY, 
+				Supply.DEFAULT_LIFESPAN, 
+				true, 
+				Supply.DEFAULT_EVERY, 
+				Supply.DEFAULT_UNTIL);
 	}
 	
 	/* 
@@ -76,16 +84,17 @@ public class Supply implements ISupply {
 	 * capacity set to input capacity value
 	 * quality set to input quality value
 	 * efficiency set to input efficiency value
-	 * lifespan set to 9999 seconds
-	 * replenish set to false
-	 * every nominally set to 1
-	 * until set to timestamp 0L
-	 * learningthreshold set to 300 (hours)
+	 * replenish set to true
+	 * efficiency, lifespan, every, until set to defaults
 	 */
 	public Supply(String name, SupplyType type, int capacity, SupplyQuality quality) {
-		this(UUID.randomUUID(), name, type, capacity, quality, 100, 9999, false, 1, 0L);
-	}	
-
+		this(UUID.randomUUID(), name, type, capacity, quality, 
+				Supply.DEFAULT_EFFICIENCY, 
+				Supply.DEFAULT_LIFESPAN, 
+				true, 
+				Supply.DEFAULT_EVERY, 
+				Supply.DEFAULT_UNTIL);
+	}
 	
 	/*
 	 * Full constructor
@@ -112,8 +121,6 @@ public class Supply implements ISupply {
 		this.setLastreplenish(-1);
 		this.resetAmount();
 	}
-	
-	
 
 	/* 
 	 * Member Variables
@@ -254,6 +261,8 @@ public class Supply implements ISupply {
 	public int getLearningcounter() {return learningcounter;}
 	public void setLearningcounter(int learningcounter) {this.learningcounter = learningcounter;}
 	
+	public int getReplenishTime() {return Supply.DEFAULT_REPLENISH_TIME;}
+	
 	// class logger
 	//private static final Logger logger = Logger.getLogger(Demand.class.getName());
 
@@ -278,15 +287,19 @@ public class Supply implements ISupply {
 		// can we replenish?
 		if(this.getReplenish()) {
 		
-			// replenish up to current timestamp
-			while((this.getLastreplenish()+this.getEvery()) < (System.currentTimeMillis()/1000)) {
-				
-				// update replenishment timestamp
-				this.setLastreplenish( this.getLastreplenish() + this.getEvery());
-				
-				// set amount to capacity
-				this.resetAmount();
-			}
+			// TODO: manage expiration and Supply "time" better
+			// short circuit for now
+			this.resetAmount();
+			
+//			// replenish up to current timestamp
+//			while((this.getLastreplenish()+this.getEvery()) < (System.currentTimeMillis()/1000)) {
+//				
+//				// update replenishment timestamp
+//				this.setLastreplenish( this.getLastreplenish() + this.getEvery());
+//				
+//				// set amount to capacity
+//				this.resetAmount();
+//			}
 		}
 		
 		// update state to exhausted if unable to replenish
@@ -297,9 +310,12 @@ public class Supply implements ISupply {
 	
 	// update state based on expiry
 	public void checkExpiry() {
-		if (this.getExpirytime() <= (System.currentTimeMillis() / 1000)) {
-			this.setState(SupplyState.EXPIRED);
-		}
+		
+		// TODO: manage Supply "time" better
+		
+//		if (this.getExpirytime() <= (System.currentTimeMillis() / 1000)) {
+//			this.setState(SupplyState.EXPIRED);
+//		}
 	}
 	
 	// check whether Supply is valid
@@ -326,6 +342,9 @@ public class Supply implements ISupply {
 	// update SupplyQuality based on experience
 	private void learn(int experience) {
 		if(this.getLearningthreshold() < (this.learningcounter + experience)) {
+
+			System.out.println("+S "+this.getName()+" increased in quality from learning");
+
 			if((this.getQuality().ordinal()+1) < SupplyQuality.values().length) {
 				this.setQuality(SupplyQuality.values()[this.getQuality().ordinal()+1]);
 				this.resetLearning();

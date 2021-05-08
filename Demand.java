@@ -48,7 +48,7 @@ public class Demand implements IDemand {
 	public static Demand createCollaborationDemand(Demand d, Agent a) {
 		Demand collab = new Demand(UUID.randomUUID(),
 								  d.getName()+"_Collab",
-								  DemandPriority.HIGH,
+								  DemandPriority.URGENT,
 								  DemandType.COLLABORATE,
 								  DemandState.DEFINED,
 								  (int)(d.getEffort()*COLLAB_FACTOR)+1, // always >0
@@ -316,6 +316,9 @@ public class Demand implements IDemand {
 	}	
 	public void setPartial() {
 		this.setState(DemandState.PARTIAL);
+	}
+	public void setIncomplete() {
+		this.setState(DemandState.INCOMPLETE);
 	}
 	
 	// convenience functions for checking demand state

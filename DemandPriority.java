@@ -7,5 +7,5 @@
  *  Generic enumerated list of priorities for Demands
  */
 public enum DemandPriority {
-	LOW, MEDIUMLOW, MEDIUM, MEDIUMHIGH, HIGH
+	LOW, MEDIUMLOW, MEDIUM, MEDIUMHIGH, HIGH, URGENT
 }
