@@ -10,7 +10,7 @@ import javafx.beans.property.StringProperty;
  * 
  */
 
-public interface IDemand { 
+public interface IDemand {
 	// A property, from JavaFX, allows the attributes to be observable (and bindable)
 	// if only working with a text UI, these attributes could be their plain type (e.g. int, String)
 	// BELOW is a BUNCH of boilerplate code for getting, setting, and accessing properties

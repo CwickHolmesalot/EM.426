@@ -1,11 +1,17 @@
 import java.beans.PropertyChangeEvent;
 import java.beans.PropertyChangeListener;
 import java.beans.PropertyChangeSupport;
+import java.io.FileWriter;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
-//import java.util.Optional;
+import java.lang.Math;
 import java.util.Random;
+
+import javafx.beans.property.SimpleDoubleProperty;
+import javafx.beans.property.SimpleIntegerProperty;
+
 import java.lang.Integer;
 
 /*
@@ -26,6 +32,13 @@ import java.lang.Integer;
 
 public class SimEnvironment implements PropertyChangeListener {
 
+	/****** CONTROLS ******/
+	public SimpleIntegerProperty prob_new_demand;
+	public SimpleIntegerProperty n_sci_agents;
+	public SimpleIntegerProperty n_eng_agents;
+	public SimpleIntegerProperty n_mgr_agents;
+	public SimpleDoubleProperty  progress;
+	
 	/* 
 	 * Member variables for simulation environment
 	 */
@@ -40,8 +53,12 @@ public class SimEnvironment implements PropertyChangeListener {
 	private ArrayList<PropertyChangeEvent> collab_requests;
 	private ArrayList<PropertyChangeEvent> resync_requests;
 	
-	// global (committed) time
-	private int global_time;
+	// properties for JavaFX interface
+	public SimpleIntegerProperty global_time;
+	public SimpleIntegerProperty n_agents;
+	public SimpleIntegerProperty n_collaborations;
+	public SimpleIntegerProperty n_completed;
+	public SimpleIntegerProperty n_committed;
 	
 	// helper function to ensure underutilized agents float to top
 	void sortAgents() {
@@ -83,6 +100,28 @@ public class SimEnvironment implements PropertyChangeListener {
 		
 		// no resync requests yet
 		resync_requests = new ArrayList<PropertyChangeEvent>();
+		
+		// establish property variables
+		prob_new_demand = new SimpleIntegerProperty();
+		n_sci_agents = new SimpleIntegerProperty();
+		n_eng_agents = new SimpleIntegerProperty();
+		n_mgr_agents = new SimpleIntegerProperty();
+		progress = new SimpleDoubleProperty();
+		
+		global_time = new SimpleIntegerProperty();
+		n_agents = new SimpleIntegerProperty();
+		n_collaborations = new SimpleIntegerProperty();
+		n_completed = new SimpleIntegerProperty();
+		n_committed = new SimpleIntegerProperty();
+		
+		// set default values
+		this.setProbNewDemand(20);
+		this.setNumAgents(3);
+		this.setProgress(0.0);
+		this.setGlobalTime(0);
+		this.setNumCollaborations(0);
+		this.setNumCompleted(0);
+		this.setNumCommitted(0);
 		
 		// initialize environment
 		initialize();
@@ -126,19 +165,20 @@ public class SimEnvironment implements PropertyChangeListener {
 		// view mapping
 		demand_list.printSupplyDemandMap();
 		
-		// set global time
-		this.setGlobaltime(0);
-	}
-	
-	// Getters and Setters
-	public int getGlobaltime() {
-		return global_time;
+		/****** CREATE SOME DEMANDS ******/
+		for (int nd = 0; nd < 10; nd++) {
+			this.createDemand(false);
+		}
+
+		// establish a 2:2:1 ratio between agents
+		this.setNumSciAgents(Math.max(1,(int)(Math.floor(this.getNumAgents().get()*0.4))));
+		this.setNumEngAgents(Math.max(1,(int)(Math.floor(this.getNumAgents().get()*0.4))));
+		this.setNumMgrAgents(Math.max(1,(int)(Math.floor(this.getNumAgents().get()*0.2))));
+		
+		/****** DEFINE AGENTS ******/
+		this.createAgents();
 	}
 
-	public void setGlobaltime(int globaltime) {
-		this.global_time = globaltime;
-	}
-	
 	// generate demands for demand_list
 	public void createDemand(boolean alert_agents) {
 		// RANDOMNESS/UNCERTAINTY
@@ -176,9 +216,9 @@ public class SimEnvironment implements PropertyChangeListener {
 	}
 	
 	// agent factory function
-	public void createAgents(int nEng, int nSci, int nMgr) {
+	public void createAgents() {
 
-		for ( int e = 0; e < nEng; e++) {
+		for ( int e = 0; e < this.getNumEngAgents().get(); e++) {
 			Agent engAgent = new EngineerAgent("Engineer"+(e+1));
 			
 			// make engineers impatient for waiting
@@ -187,7 +227,7 @@ public class SimEnvironment implements PropertyChangeListener {
 			agent_list.add(engAgent);
 		}
 	
-		for ( int s = 0; s < nSci; s++) {
+		for ( int s = 0; s < this.getNumSciAgents().get(); s++) {
 			Agent sciAgent = new ScienceAgent("Scientist"+(s+1));
 			
 			// make scientists tolerant of waiting
@@ -196,7 +236,7 @@ public class SimEnvironment implements PropertyChangeListener {
 			agent_list.add(sciAgent);
 		}
 		
-		for ( int m = 0; m < nMgr; m++) {
+		for ( int m = 0; m < this.getNumMgrAgents().get(); m++) {
 			Agent mgrAgent = new ManagerAgent("Manager"+(m+1));
 			
 			// make managers mildly tolerant of waiting
@@ -222,13 +262,40 @@ public class SimEnvironment implements PropertyChangeListener {
 	
 	// print progress update to console
 	public void progressReport() {
-		System.out.println("------Progress Report-------");
-		System.out.println("Simulation Time: "+this.getGlobaltime()+"\n\n");
 		
-		for (Agent a : agent_list) {
-			System.out.println(a.toProgressString()+"\n");
+		try{
+			FileWriter myWriter = new FileWriter("interaction_report.txt");
+			
+			System.out.println("------Progress Report-------");
+			System.out.println("Simulation Time: "+this.getGlobalTime().get()+"\n\n");
+			
+			int col=0, comp=0, comm=0;
+			
+			for (Agent a : agent_list) {
+				col += a.interactions.size();
+				comp += a.completed_tasks.size();
+				comm += a.committed_tasks.size();
+				System.out.println(a.toProgressString()+"\n");
+				a.reportInteractions(myWriter);
+			}
+			System.out.println("--------End Report---------");
+			
+			myWriter.close();
+			
+			// collaborations will be noted 2x
+			n_collaborations.set(col/2);
+			
+			// includes collaboration demands and regular ones
+			n_completed.set(comp);
+			
+			// includes collaboration demands and regular ones
+			n_committed.set(comm);
 		}
-		System.out.println("--------End Report---------");
+		catch (IOException e) {
+			// fail gracefully
+			System.err.println("Failed while writing progress report to file.");
+			e.printStackTrace();
+		}
 	}
 	
 	@Override
@@ -291,33 +358,101 @@ public class SimEnvironment implements PropertyChangeListener {
         support.firePropertyChange("commituntil", null, min_time);
         
         // update global time stamp
-		this.setGlobaltime(min_time);
+		this.setGlobalTime(min_time);
     }
-	
-	public static void main(String args[]) {
-				
-		/****** CONTROLS ******/
-		int NEW_DEMAND_PROB = 20;
-		
-		
-		/****** CREATE ENVIRONMENT ******/
-		SimEnvironment sim = new SimEnvironment();
+    
+	// Getters and Setters
+	public SimpleIntegerProperty getGlobalTime() {
+		return global_time;
+	}
 
-		/****** CREATE SOME DEMANDS ******/
-		for (int nd = 0; nd < 10; nd++) {
-			sim.createDemand(false);
-		}
-		
-		/****** DEFINE AGENTS ******/
-		sim.createAgents(1,1,1);
-		
+	public void setGlobalTime(int globaltime) {
+		this.global_time.set(globaltime);
+	}
+
+	public SimpleIntegerProperty getProbNewDemand() {
+		return prob_new_demand;
+	}
+
+	public void setProbNewDemand(int prob) {
+		this.prob_new_demand.set(prob);
+	}
+
+	public SimpleIntegerProperty getNumSciAgents() {
+		return n_sci_agents;
+	}
+
+	public void setNumSciAgents(int n_agents) {
+		this.n_sci_agents.set(n_agents);
+	}
+
+	public SimpleIntegerProperty getNumEngAgents() {
+		return n_eng_agents;
+	}
+
+	public void setNumEngAgents(int n_agents) {
+		this.n_eng_agents.set(n_agents);;
+	}
+
+	public SimpleIntegerProperty getNumMgrAgents() {
+		return n_mgr_agents;
+	}
+
+	public void setNumMgrAgents(int n_agents) {
+		this.n_mgr_agents.set(n_agents);
+	}
+
+	public SimpleIntegerProperty getNumAgents() {
+		return n_agents;
+	}
+
+	public void setNumAgents(int n_agents) {
+		this.n_agents.set(n_agents);
+	}
+
+	public SimpleIntegerProperty getNumCollaborations() {
+		return n_collaborations;
+	}
+
+	public void setNumCollaborations(int n_collab) {
+		this.n_collaborations.set(n_collab);
+	}
+
+	public SimpleIntegerProperty getNumCompleted() {
+		return n_completed;
+	}
+
+	public void setNumCompleted(int n_complete) {
+		this.n_completed.set(n_complete);
+	}
+
+	public SimpleIntegerProperty getNumCommitted() {
+		return n_committed;
+	}
+
+	public void setNumCommitted(int n_commit) {
+		this.n_committed.set(n_commit);
+	}
+
+	public SimpleDoubleProperty getProgress() {
+		return progress;
+	}
+
+	public void setProgress(double p) {
+		this.progress.set(p);
+	}
+    
+	public void start() {
+
 		/*
 		 * Start simulation
 		 */
-		for (int i = 0; i < 300; i++) {			
+		double MAX_CYCLES = 300.0;
+		
+		for (int i = 0; i < (int)MAX_CYCLES; i++) {						
 			
 			/****** GENERATE DEMANDS ******/
-			sim.createRandomDemand(NEW_DEMAND_PROB);
+			this.createRandomDemand(this.getProbNewDemand().get());
 			
 			try
 			{
@@ -332,22 +467,41 @@ public class SimEnvironment implements PropertyChangeListener {
 			}
 			
 			// manage agent requests
-			sim.manageRequests();
+			this.manageRequests();
 			
 			// update simulation global time
-	        sim.syncGlobalTime();
+	        this.syncGlobalTime();
 	        
 	        // report out progress
 	        if(i%25 == 0) {
-	        	
+				this.setProgress((i+1)/MAX_CYCLES);
+				System.out.println("PROGRESS: "+this.progress.get());
 	        	// report out on progress
-	        	sim.progressReport();
-	        	try { Thread.sleep(2000);}
-	        	catch(InterruptedException ex)
-				{ 
+	        	this.progressReport();
+	        	try { 
+	        		Thread.sleep(2000);
+        		}
+	        	catch(InterruptedException ex){ 
 	        		// do nothing
 				}
 	        }
 		}
+		this.setProgress(1.0);
 	}
+
+//	public static void main(String args[]) {
+//				
+//		/****** CREATE ENVIRONMENT ******/
+//		SimEnvironment sim = new SimEnvironment();
+//
+//		/****** CREATE SOME DEMANDS ******/
+//		for (int nd = 0; nd < 10; nd++) {
+//			sim.createDemand(false);
+//		}
+//		
+//		/****** DEFINE AGENTS ******/
+//		sim.createAgents(1,1,1);
+//		
+//		sim.start();
+//	}
 }

@@ -1,6 +1,8 @@
 import java.beans.PropertyChangeEvent;
 import java.beans.PropertyChangeListener;
 import java.beans.PropertyChangeSupport;
+import java.io.FileWriter;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -73,7 +75,8 @@ public class Agent implements PropertyChangeListener {
 		this.abandoned_tasks = new ArrayList<Demand>();
 		this.backlog_tasks = new ArrayList<Demand>();
 		this.ledger = new Hashtable<UUID, Pair<Integer,ArrayList<SupplyImage>>>();
-		this.interactions = new Hashtable<UUID, Integer>();
+		//this.interactions = new Hashtable<UUID, Integer>();
+		this.interactions = new Hashtable<String, Integer>();
 		this.cycles_since_synch = 0;
 		this.setSupplyDemandDictionary(Optional.empty());
 		
@@ -109,7 +112,8 @@ public class Agent implements PropertyChangeListener {
 	protected Optional<Demand> current_task;      // current active task
 	
 	// look-up table for agent interactions
-	protected Hashtable<UUID,Integer> interactions; 
+	//protected Hashtable<UUID,Integer> interactions; 
+	protected Hashtable<String,Integer> interactions; 
 		
 	// current "time" according to the agent
 	protected int agentTime;
@@ -135,7 +139,7 @@ public class Agent implements PropertyChangeListener {
 	public void start(DemandList dl){
 		
 		// add tasks to backlog
-		refreshBacklog(dl);
+		refreshBacklog(dl, true);
 		
 		// child Agent class functionality can override this function
 		this.setState(AgentState.ACTIVE);
@@ -143,6 +147,9 @@ public class Agent implements PropertyChangeListener {
 	}
 	
 	public void refreshBacklog(DemandList dl) {
+		refreshBacklog(dl, false);
+	}
+	public void refreshBacklog(DemandList dl, boolean verbose) {
 		for (Demand d: dl.getDemandlist()) {
 			DemandState s = d.getState();
 			if(s == DemandState.COMPLETE) {
@@ -161,7 +168,9 @@ public class Agent implements PropertyChangeListener {
 			// check demand match
 			if(this.isDemandAchieveableANY(d, false)) {
 				this.addToBacklog(d);
-				System.out.println(this.getName()+" added "+d.getName()+" to backlog");
+				
+				if(verbose)
+					System.out.println(this.getName()+" added "+d.getName()+" to backlog");
 			}
 			
 			// mark as seen
@@ -188,10 +197,11 @@ public class Agent implements PropertyChangeListener {
 					// check demand match
  					if(this.isDemandAchieveableANY(d, false)) {
 						this.addToBacklog(d);
-						System.out.println(this.getName()+" added demand to backlog");
+						//System.out.println(this.getName()+" added demand to backlog");
 					}
  					else {
- 						System.out.println(this.getName()+" cannot perform demand: "+d.toString());
+ 						// quietly fall through
+ 						//System.out.println(this.getName()+" cannot perform demand: "+d.toString());
  					}
  					
  					// mark as seen
@@ -232,8 +242,10 @@ public class Agent implements PropertyChangeListener {
 	
 	// track interactions with a collaborating Agent
 	protected void updateInteractions(Agent collaborator) {
-		int prevval = this.interactions.getOrDefault(collaborator.getId(), 0);
-		this.interactions.put(collaborator.getId(),prevval+1);
+		//int prevval = this.interactions.getOrDefault(collaborator.getId(), 0);
+		//this.interactions.put(collaborator.getId(),prevval+1);
+		int prevval = this.interactions.getOrDefault(collaborator.getName(), 0);
+		this.interactions.put(collaborator.getName(),prevval+1);
 	}
 	
 	// manage timeout on waiting for collaboration
@@ -717,7 +729,7 @@ public class Agent implements PropertyChangeListener {
 				}
 
 				// **** KEY ELEMENT OF MODEL ****
-				// MORE INTERACTIONS == LESS TIME TO COMPLETE
+				// MORE INTERACTIONS == BETTER AT TASKS
 				
 				// scale task effort on interactions
 				int collab_effort;
@@ -842,12 +854,32 @@ public class Agent implements PropertyChangeListener {
 		progressString += "Collaborations: "+this.interactions.keySet().size()+"\n";
 		progressString += "List of Interactions: \n";
 		
-		Iterator<Entry<UUID, Integer>> it = this.interactions.entrySet().iterator();
+		//Iterator<Entry<UUID, Integer>> it = this.interactions.entrySet().iterator();
+		Iterator<Entry<String, Integer>> it = this.interactions.entrySet().iterator();
 	    while (it.hasNext()) {
-	        progressString += ("("+this.getId()+","+it.next().getKey()+")\n"); //pair.getValue());
+	        // progressString += ("("+this.getId()+","+it.next().getKey()+")\n"); //pair.getValue());
+	    	progressString += ("("+this.getName()+","+it.next().getKey()+")\n"); //pair.getValue());
 	    }
 		// * total collaborations
 		return progressString;
+	}
+	
+	// print interactions to file
+	public void reportInteractions(FileWriter intWriter) {
+		//Iterator<Entry<UUID, Integer>> it = this.interactions.entrySet().iterator();
+		Iterator<Entry<String, Integer>> it = this.interactions.entrySet().iterator();
+	    while (it.hasNext()) {
+	    	try {
+		        // progressString += ("("+this.getId()+","+it.next().getKey()+")\n"); //pair.getValue());
+		    	intWriter.write(this.getName()+","+it.next().getKey()+"\n");
+	    	}
+	    	catch (IOException e) {
+				// fail gracefully
+				System.err.println("Failed while writing progress report to file.");
+				e.printStackTrace();
+				break;
+	    	}
+	    }
 	}
 	
 	/*

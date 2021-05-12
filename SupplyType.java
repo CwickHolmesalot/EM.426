@@ -11,5 +11,4 @@
 
 public enum SupplyType {
 	SKILL1, SKILL2, SKILL3, SKILL4, SKILL5
-
 }
