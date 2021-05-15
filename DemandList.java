@@ -27,6 +27,12 @@ public class DemandList implements Iterable<Demand> {
 		getDemandlist().add(d);
 	}
 	
+	public void addIfUnseen(Demand d) {
+		if(!getDemandlist().contains(d)) {
+			addDemand(d);
+		}
+	}
+	
 	public int getDemandCount() {
 		return this.getDemandlist().size();
 	}

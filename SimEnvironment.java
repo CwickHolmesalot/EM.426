@@ -9,8 +9,13 @@ import java.util.Comparator;
 import java.lang.Math;
 import java.util.Random;
 
+import javafx.beans.property.SimpleListProperty;
+import javafx.beans.property.SimpleBooleanProperty;
 import javafx.beans.property.SimpleDoubleProperty;
 import javafx.beans.property.SimpleIntegerProperty;
+import javafx.collections.FXCollections;
+import javafx.collections.ObservableList;
+import javafx.scene.chart.XYChart.Data;
 
 import java.lang.Integer;
 
@@ -33,11 +38,14 @@ import java.lang.Integer;
 public class SimEnvironment implements PropertyChangeListener {
 
 	/****** CONTROLS ******/
-	public SimpleIntegerProperty prob_new_demand;
 	public SimpleIntegerProperty n_sci_agents;
 	public SimpleIntegerProperty n_eng_agents;
 	public SimpleIntegerProperty n_mgr_agents;
 	public SimpleDoubleProperty  progress;
+	public SimpleIntegerProperty n_cycles;
+	public SimpleBooleanProperty is_finished;
+	public SimpleIntegerProperty interax_lr;
+	public SimpleIntegerProperty prob_new_demand;
 	
 	/* 
 	 * Member variables for simulation environment
@@ -60,6 +68,11 @@ public class SimEnvironment implements PropertyChangeListener {
 	public SimpleIntegerProperty n_completed;
 	public SimpleIntegerProperty n_committed;
 	
+	// time series for tracking progress
+	public SimpleListProperty<Data<Number,Number>> complete_timeseries;
+	public SimpleListProperty<Data<Number,Number>> commit_timeseries;
+	public SimpleListProperty<Data<Number,Number>> collab_timeseries;
+
 	// helper function to ensure underutilized agents float to top
 	void sortAgents() {
 		
@@ -102,31 +115,41 @@ public class SimEnvironment implements PropertyChangeListener {
 		resync_requests = new ArrayList<PropertyChangeEvent>();
 		
 		// establish property variables
-		prob_new_demand = new SimpleIntegerProperty();
-		n_sci_agents = new SimpleIntegerProperty();
-		n_eng_agents = new SimpleIntegerProperty();
-		n_mgr_agents = new SimpleIntegerProperty();
-		progress = new SimpleDoubleProperty();
+		n_cycles = new SimpleIntegerProperty();         // number of cycles to simulate
+		prob_new_demand = new SimpleIntegerProperty();  // probability a demand is generated per cycle
+		n_sci_agents = new SimpleIntegerProperty();     // number of ScientistAgents in the sim
+		n_eng_agents = new SimpleIntegerProperty();     // number of EngineerAgents in the sim
+		n_mgr_agents = new SimpleIntegerProperty();     // number of ManagerAgents in the sim
+		progress = new SimpleDoubleProperty();          // simulation progress
+		is_finished = new SimpleBooleanProperty();      // has simulation completed?
 		
-		global_time = new SimpleIntegerProperty();
-		n_agents = new SimpleIntegerProperty();
-		n_collaborations = new SimpleIntegerProperty();
-		n_completed = new SimpleIntegerProperty();
-		n_committed = new SimpleIntegerProperty();
-		
+		global_time = new SimpleIntegerProperty();      // simulation global time
+		n_agents = new SimpleIntegerProperty();         // number of agents in simulation
+		n_collaborations = new SimpleIntegerProperty(); // number of agent collaborations
+		n_completed = new SimpleIntegerProperty();      // number of demand completions
+		n_committed = new SimpleIntegerProperty();      // number of demand commits
+		interax_lr = new SimpleIntegerProperty();       // learning rate from collaborations
+
+		complete_timeseries = new SimpleListProperty<Data<Number,Number>>(FXCollections.observableArrayList());
+		commit_timeseries   = new SimpleListProperty<Data<Number,Number>>(FXCollections.observableArrayList());
+		collab_timeseries   = new SimpleListProperty<Data<Number,Number>>(FXCollections.observableArrayList());
+	
 		// set default values
-		this.setProbNewDemand(20);
-		this.setNumAgents(3);
+		this.setNumCycles(100);
+		this.setProbNewDemand(1);
+		this.setNumAgents(2);
 		this.setProgress(0.0);
+		this.setIsFinished(false);
 		this.setGlobalTime(0);
 		this.setNumCollaborations(0);
 		this.setNumCompleted(0);
 		this.setNumCommitted(0);
+		this.setInteraxLR(85);
 		
 		// initialize environment
 		initialize();
 	}
-	
+
 	/*
 	 * Helper Functions
 	 */
@@ -155,28 +178,15 @@ public class SimEnvironment implements PropertyChangeListener {
 		demand_list.addSupplyDemandPair(DemandType.NEED1,SupplyType.SKILL1);
 		demand_list.addSupplyDemandPair(DemandType.NEED2,SupplyType.SKILL1);
 		demand_list.addSupplyDemandPair(DemandType.NEED2,SupplyType.SKILL2);
+		demand_list.addSupplyDemandPair(DemandType.NEED2,SupplyType.SKILL4);
 		demand_list.addSupplyDemandPair(DemandType.NEED3,SupplyType.SKILL2);
 		demand_list.addSupplyDemandPair(DemandType.NEED3,SupplyType.SKILL3);
-		demand_list.addSupplyDemandPair(DemandType.NEED3,SupplyType.SKILL4);
 		demand_list.addSupplyDemandPair(DemandType.NEED4,SupplyType.SKILL4);
 		demand_list.addSupplyDemandPair(DemandType.NEED5,SupplyType.SKILL4);
 		demand_list.addSupplyDemandPair(DemandType.NEED5,SupplyType.SKILL5);
 
 		// view mapping
 		demand_list.printSupplyDemandMap();
-		
-		/****** CREATE SOME DEMANDS ******/
-		for (int nd = 0; nd < 10; nd++) {
-			this.createDemand(false);
-		}
-
-		// establish a 2:2:1 ratio between agents
-		this.setNumSciAgents(Math.max(1,(int)(Math.floor(this.getNumAgents().get()*0.4))));
-		this.setNumEngAgents(Math.max(1,(int)(Math.floor(this.getNumAgents().get()*0.4))));
-		this.setNumMgrAgents(Math.max(1,(int)(Math.floor(this.getNumAgents().get()*0.2))));
-		
-		/****** DEFINE AGENTS ******/
-		this.createAgents();
 	}
 
 	// generate demands for demand_list
@@ -187,8 +197,14 @@ public class SimEnvironment implements PropertyChangeListener {
 		int dtype = rand.nextInt(DemandType.values().length);
 		
 		// don't allow collaboration demands to be created here
-		while (dtype == DemandType.COLLABORATE.ordinal())
-			dtype = rand.nextInt(DemandType.values().length);
+		if(this.getNumAgents().get()==2) {
+			// force collaboration on NEED3 for 2 agent stress test
+			dtype = DemandType.NEED3.ordinal();
+		}
+		else {
+			while (dtype == DemandType.COLLABORATE.ordinal())
+				dtype = rand.nextInt(DemandType.values().length);
+		}
 		
 		int dprior = rand.nextInt(DemandPriority.values().length);
 		// don't allow urgent demands to be created here (save those for collaboration)
@@ -198,54 +214,76 @@ public class SimEnvironment implements PropertyChangeListener {
 		Demand newdemand = new Demand("Demand"+String.valueOf(demand_list.getDemandCount()),
 				DemandPriority.values()[dprior], 
 				DemandType.values()[dtype], 
-				rand.nextInt(50));
+				rand.nextInt(25));
 		
-		System.out.println("+D Simulation created new Demand:"+newdemand.toString());
+		System.out.println("+D Simulation created new demand: "+newdemand.toString());
 		
 		// add demand to demand_list (which triggers an event)
 		demand_list.newDemand(newdemand, alert_agents);
 	}
 	
 	// randomly choose whether or not to generate a new Demand
-	public void createRandomDemand(int pcntchance) {
+	public void createRandomDemand() {
 		
 		// RANDOMNESS/UNCERTAINTY
-		if(rand.nextInt(100)<pcntchance) {
+		if(rand.nextInt(100)<this.getProbNewDemand()) {
 			createDemand(true);
 		}
 	}
 	
 	// agent factory function
 	public void createAgents() {
-
-		for ( int e = 0; e < this.getNumEngAgents().get(); e++) {
-			Agent engAgent = new EngineerAgent("Engineer"+(e+1));
-			
-			// make engineers impatient for waiting
-			engAgent.setMaxWaitCycles(2);
-			
-			agent_list.add(engAgent);
-		}
-	
-		for ( int s = 0; s < this.getNumSciAgents().get(); s++) {
-			Agent sciAgent = new ScienceAgent("Scientist"+(s+1));
-			
-			// make scientists tolerant of waiting
-			sciAgent.setMaxWaitCycles(5);
-			
-			agent_list.add(sciAgent);
+		
+		if(agent_list.size()>0) {
+			// clear old agents
+			agent_list.clear();
 		}
 		
-		for ( int m = 0; m < this.getNumMgrAgents().get(); m++) {
-			Agent mgrAgent = new ManagerAgent("Manager"+(m+1));
-			
-			// make managers mildly tolerant of waiting
-			mgrAgent.setMaxWaitCycles(3);
-			
-			agent_list.add(mgrAgent);
+		// validation test with 1 agent
+		if(!this.getNumAgents().greaterThan(1).get()) {
+			// validation test with 1 agent
+			Agent supAgent = new SuperAgent("Super1");
+			agent_list.add(supAgent);
 		}
+		else if(!this.getNumAgents().greaterThan(2).get()) {
+			// validation test with 2 agents
+			Agent yinAgent = new YinAgent("AgentA");
+			Agent yangAgent = new YangAgent("AgentB");
+			agent_list.add(yinAgent);
+			agent_list.add(yangAgent);
+		}
+		else {
+			for ( int e = 0; e < this.getNumEngAgents().get(); e++) {
+				Agent engAgent = new EngineerAgent("Engineer"+(e+1));
+				
+				// make engineers impatient for waiting
+				engAgent.setMaxWaitCycles(4);
+				
+				agent_list.add(engAgent);
+			}
 		
+			for ( int s = 0; s < this.getNumSciAgents().get(); s++) {
+				Agent sciAgent = new ScienceAgent("Scientist"+(s+1));
+				
+				// make scientists tolerant of waiting
+				sciAgent.setMaxWaitCycles(5);
+				
+				agent_list.add(sciAgent);
+			}
+			
+			for ( int m = 0; m < this.getNumMgrAgents().get(); m++) {
+				Agent mgrAgent = new ManagerAgent("Manager"+(m+1));
+				
+				// make managers mildly tolerant of waiting
+				mgrAgent.setMaxWaitCycles(3);
+				
+				agent_list.add(mgrAgent);
+			}
+		}
 		for (Agent a : agent_list) {
+			
+			// update interaction rate
+			a.setInteraxLearningRate(this.getInteraxLR()/100.0);
 			
 			// give agent the supply-demand map
 			a.setSupplyDemandDictionary(demand_list.getSupplyDemandDict());
@@ -290,6 +328,15 @@ public class SimEnvironment implements PropertyChangeListener {
 			
 			// includes collaboration demands and regular ones
 			n_committed.set(comm);
+			
+			// update timeseries
+			int index = collab_timeseries.size()-1;
+			if((index<0) || 
+			   (collab_timeseries.get().get(index).getXValue().intValue() != this.getGlobalTime().get())) {
+				collab_timeseries.get().add(new Data<Number,Number>(this.getGlobalTime().get(),(col/2)));
+				commit_timeseries.get().add(new Data<Number,Number>(this.getGlobalTime().get(),comm));
+				complete_timeseries.get().add(new Data<Number,Number>(this.getGlobalTime().get(),comp));
+			}
 		}
 		catch (IOException e) {
 			// fail gracefully
@@ -316,6 +363,10 @@ public class SimEnvironment implements PropertyChangeListener {
 	// manage various requests from the agents
 	public void manageRequests() {
 		while(!this.collab_requests.isEmpty()) {
+			
+			// check if calling demand is a new/cloned demand
+			demand_list.addIfUnseen((Demand)collab_requests.get(0).getOldValue());
+			
 			// generate a new Demand
 			demand_list.newDemand(Demand.createCollaborationDemand((Demand)(collab_requests.get(0).getOldValue()),
 																   (Agent)(collab_requests.get(0).getNewValue())));
@@ -361,6 +412,71 @@ public class SimEnvironment implements PropertyChangeListener {
 		this.setGlobalTime(min_time);
     }
     
+	public void start() {
+
+		/*
+		 * Start simulation
+		 */
+
+		/****** CREATE SOME DEMANDS ******/
+		for (int nd = 0; nd < 10; nd++) {
+			this.createDemand(false);
+		}
+
+		/****** DEFINE AGENTS ******/
+		// establish a 2:2:1 ratio between agents
+		this.setNumSciAgents(Math.max(1,(int)(Math.floor(this.getNumAgents().get()*0.4))));
+		this.setNumEngAgents(Math.max(1,(int)(Math.floor(this.getNumAgents().get()*0.4))));
+		this.setNumMgrAgents(Math.max(1,(int)(Math.floor(this.getNumAgents().get()*0.2))));
+		
+		this.createAgents();
+		
+		System.out.println("Max number of cycles:" +this.getNumCycles().get());
+		
+		
+		for (int i = 0; i < this.getNumCycles().get(); i++) {						
+			
+			/****** GENERATE DEMANDS ******/
+			this.createRandomDemand();
+			
+			try
+			{
+				// pause before next time step
+			    Thread.sleep(1);
+			}
+			catch(InterruptedException ex)
+			{
+				// kill loop if an interrupt is captured
+			    Thread.currentThread().interrupt();
+			    break;
+			}
+			
+			// manage agent requests
+			this.manageRequests();
+			
+			// update simulation global time
+	        this.syncGlobalTime();
+	        
+	        // report out progress
+	        if(i%10 == 0) {
+				this.setProgress((i+1)/(double)this.getNumCycles().get());
+				System.out.println("PROGRESS: "+this.progress.get());
+	        	// report out on progress
+	        	this.progressReport();
+	        	try { 
+	        		Thread.sleep(500);
+        		}
+	        	catch(InterruptedException ex){ 
+	        		// do nothing
+				}
+	        }
+		}
+		
+		// mark complete
+		this.setProgress(1.0);
+		this.setIsFinished(true);
+	}
+	
 	// Getters and Setters
 	public SimpleIntegerProperty getGlobalTime() {
 		return global_time;
@@ -368,14 +484,6 @@ public class SimEnvironment implements PropertyChangeListener {
 
 	public void setGlobalTime(int globaltime) {
 		this.global_time.set(globaltime);
-	}
-
-	public SimpleIntegerProperty getProbNewDemand() {
-		return prob_new_demand;
-	}
-
-	public void setProbNewDemand(int prob) {
-		this.prob_new_demand.set(prob);
 	}
 
 	public SimpleIntegerProperty getNumSciAgents() {
@@ -441,52 +549,89 @@ public class SimEnvironment implements PropertyChangeListener {
 	public void setProgress(double p) {
 		this.progress.set(p);
 	}
-    
-	public void start() {
+	
+	public SimpleIntegerProperty getNumCycles() {
+		return n_cycles;
+	}
 
-		/*
-		 * Start simulation
-		 */
-		double MAX_CYCLES = 300.0;
-		
-		for (int i = 0; i < (int)MAX_CYCLES; i++) {						
-			
-			/****** GENERATE DEMANDS ******/
-			this.createRandomDemand(this.getProbNewDemand().get());
-			
-			try
-			{
-				// pause before next time step
-			    Thread.sleep(1);
-			}
-			catch(InterruptedException ex)
-			{
-				// kill loop if an interrupt is captured
-			    Thread.currentThread().interrupt();
-			    break;
-			}
-			
-			// manage agent requests
-			this.manageRequests();
-			
-			// update simulation global time
-	        this.syncGlobalTime();
-	        
-	        // report out progress
-	        if(i%25 == 0) {
-				this.setProgress((i+1)/MAX_CYCLES);
-				System.out.println("PROGRESS: "+this.progress.get());
-	        	// report out on progress
-	        	this.progressReport();
-	        	try { 
-	        		Thread.sleep(2000);
-        		}
-	        	catch(InterruptedException ex){ 
-	        		// do nothing
-				}
-	        }
-		}
-		this.setProgress(1.0);
+	public void setNumCycles(int n) {
+		this.n_cycles.set(n);
+	}
+
+	public SimpleBooleanProperty getIsFinished() {
+		return is_finished;
+	}
+
+	public void setIsFinished(boolean finished) {
+		this.is_finished.set(finished);
+	}
+
+	public final SimpleListProperty<Data<Number, Number>> completeTimeseriesProperty() {
+		return this.complete_timeseries;
+	}
+	
+
+	public final ObservableList<Data<Number, Number>> getCompleteTimeseries() {
+		return this.completeTimeseriesProperty().get();
+	}
+	
+
+	public final void setCompleteTimeseries(final ObservableList<Data<Number, Number>> complete_timeseries) {
+		this.completeTimeseriesProperty().set(complete_timeseries);
+	}
+	
+
+	public final SimpleListProperty<Data<Number, Number>> commitTimeseriesProperty() {
+		return this.commit_timeseries;
+	}
+	
+
+	public final ObservableList<Data<Number, Number>> getCommitTimeseries() {
+		return this.commitTimeseriesProperty().get();
+	}
+	
+
+	public final void setCommitTimeseries(final ObservableList<Data<Number, Number>> commit_timeseries) {
+		this.commitTimeseriesProperty().set(commit_timeseries);
+	}
+	
+
+	public final SimpleListProperty<Data<Number, Number>> collabTimeseriesProperty() {
+		return this.collab_timeseries;
+	}
+	
+
+	public final ObservableList<Data<Number, Number>> getCollabTimeseries() {
+		return this.collabTimeseriesProperty().get();
+	}
+	
+
+	public final void setCollabTimeseries(final ObservableList<Data<Number, Number>> collab_timeseries) {
+		this.collabTimeseriesProperty().set(collab_timeseries);
+	}
+
+	public final SimpleIntegerProperty interaxLRProperty() {
+		return this.interax_lr;
+	}
+	
+	public final int getInteraxLR() {
+		return this.interaxLRProperty().get();
+	}
+	
+	public final void setInteraxLR(final int interax_lr) {
+		this.interaxLRProperty().set(interax_lr);
+	}
+
+	public final SimpleIntegerProperty probNewDemandProperty() {
+		return this.prob_new_demand;
+	}
+
+	public final int getProbNewDemand() {
+		return this.probNewDemandProperty().get();
+	}
+
+	public final void setProbNewDemand(final int prob) {
+		this.probNewDemandProperty().set(prob);
 	}
 
 //	public static void main(String args[]) {

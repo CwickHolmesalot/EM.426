@@ -205,8 +205,33 @@ public class Supply implements ISupply {
 	public void setAmount(int amount) { this.amount.set(amount); }
 	public void resetAmount() { this.amount.set(this.getCapacity()); }
 	public void reduceAmount(int byamount) { 
-		this.amount.set(this.amount.get()-byamount);
-		this.learn(byamount);
+		int remainder = byamount-this.getAmount();
+		if(remainder<=0) {
+			this.setAmount(-remainder);
+		}
+		else {
+			while(remainder > 0) {
+				if(this.getState() != SupplyState.AVAILABLE) {
+					this.setAmount(0);
+					break;
+				}
+				else if(this.isReplenishing()) {
+					this.replenishSupply();
+					remainder = remainder-this.getAmount();
+				}
+			}
+			this.setAmount(-remainder);
+		}
+		this.learn(byamount-Math.max(remainder, 0));
+	}
+	public void increaseAmount(int byamount) { 
+		this.setState(SupplyState.AVAILABLE);		
+		int addition = this.getAmount()+byamount;
+		while(addition > this.getCapacity()) {
+			addition -= this.getCapacity();
+			this.setReplenish(true);
+		}
+		this.setAmount(addition);
 	}
 	
 	// QUALITY ----------------------------------

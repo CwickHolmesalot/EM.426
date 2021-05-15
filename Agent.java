@@ -6,7 +6,6 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.HashSet;
 import java.util.Hashtable;
 import java.util.Iterator;
 import java.util.Map.Entry;
@@ -32,8 +31,7 @@ import javafx.util.Pair;
  */
 public class Agent implements PropertyChangeListener {
 
-	public static final double INTERACTION_LEARNING_RATE = 0.85;
-	public static final int SYNCH_BACKLOG_EVERY = 50;    // how often to re-check demand list
+	public static final int SYNC_BACKLOG_EVERY = 50;    // how often to re-check demand list
 	public static final int INCOMPLETE_TASK_PENALTY = 8; // 1 work day (in hours)
 	public static final int AGENT_COLLAB_GAP_THRESHOLD = 5; // amount of time difference allowed without rollback
 	
@@ -64,21 +62,22 @@ public class Agent implements PropertyChangeListener {
 		this.setWaitTime(0);
 		this.setCurrenttask(Optional.empty());
 		this.setMaxWaitCycles(5);
+		this.setState(AgentState.UNAVAILABLE);
 		this.rand = new Random();
 		rand.setSeed(43);
 		
 		this.resources = new ArrayList<Supply>();
-		
-		this.seen_tasks = new HashSet<UUID>();
+
 		this.committed_tasks = new ArrayList<Demand>();
 		this.completed_tasks = new ArrayList<Demand>();
 		this.abandoned_tasks = new ArrayList<Demand>();
 		this.backlog_tasks = new ArrayList<Demand>();
-		this.ledger = new Hashtable<UUID, Pair<Integer,ArrayList<SupplyImage>>>();
-		//this.interactions = new Hashtable<UUID, Integer>();
+		this.ledger = new Hashtable<UUID, LedgerEntry>();
 		this.interactions = new Hashtable<String, Integer>();
-		this.cycles_since_synch = 0;
+		this.cycles_since_sync = 0;
 		this.setSupplyDemandDictionary(Optional.empty());
+		this.backup = Optional.empty();
+		this.setInteraxLearningRate(0.85);
 		
 		// PropertyChangeListener set-up
 		this.support = new PropertyChangeSupport(this);
@@ -98,9 +97,12 @@ public class Agent implements PropertyChangeListener {
 	protected ArrayList<Supply> resources;
 	
 	// track considered demands
-	protected HashSet<UUID> seen_tasks;
-	private int cycles_since_synch;
+	private int cycles_since_sync;
 	
+	// track urgent requests
+	private int n_urgent;
+	private Optional<Demand> backup; // placeholder if interrupted mid-wait
+
 	// task lists
 	protected ArrayList<Demand> committed_tasks; // officially completed and committed
 	protected ArrayList<Demand> completed_tasks; // completed but not committed
@@ -108,7 +110,7 @@ public class Agent implements PropertyChangeListener {
 	protected ArrayList<Demand> backlog_tasks;   // tasks not yet performed
 	
 	// look-up table for task completion times
-	protected Hashtable<UUID,Pair<Integer,ArrayList<SupplyImage>>> ledger; 
+	protected Hashtable<UUID,LedgerEntry> ledger; 
 	protected Optional<Demand> current_task;      // current active task
 	
 	// look-up table for agent interactions
@@ -132,6 +134,9 @@ public class Agent implements PropertyChangeListener {
 	
 	// use for lookups
 	protected Optional<SupplyDemandDictionary> sd_dict;
+	
+	// factor for reducing collaboration time
+	protected double interax_learning_rate;
 
 	/*
 	 * Agent "interface" functions to be overridden in child class
@@ -172,9 +177,6 @@ public class Agent implements PropertyChangeListener {
 				if(verbose)
 					System.out.println(this.getName()+" added "+d.getName()+" to backlog");
 			}
-			
-			// mark as seen
-			this.seen_tasks.add(d.getId());
 		}
 	}
 	
@@ -189,23 +191,29 @@ public class Agent implements PropertyChangeListener {
 			// only consider Demands that are not active, partial (handled by collaboration), or complete
 			if(d.getState() == DemandState.QUEUED) {
 				
-				// is this a collaboration demand I created OR 
-				// have I already considered this demand?
+				// is this a collaboration demand I created 
 				if (!((d.getType()==DemandType.COLLABORATE) && (d.creator.get() == this))) {
 					// !(this.alreadyConsidered(d))) {
 					
 					// check demand match
  					if(this.isDemandAchieveableANY(d, false)) {
 						this.addToBacklog(d);
-						//System.out.println(this.getName()+" added demand to backlog");
+						System.out.println(this.getName()+" added demand to backlog: "+d.toString());
+						
+						// keep track of urgent requests
+						if(d.getPriority() == DemandPriority.URGENT) {
+							this.numUrgentPlusOne();
+						}
 					}
  					else {
  						// quietly fall through
  						//System.out.println(this.getName()+" cannot perform demand: "+d.toString());
  					}
- 					
- 					// mark as seen
- 					this.seen_tasks.add(d.getId());
+				}
+				else if(this.getState() != AgentState.WAITING) {
+					// forgot I was waiting for help!  
+					this.setState(AgentState.WAITING);
+					this.setCurrenttask(d.ancillaryDemand);
 				}
 			}
 		}
@@ -216,13 +224,30 @@ public class Agent implements PropertyChangeListener {
 		else if (evt.getPropertyName()=="finishtask") {
 			// if Agent is in ACTIVE state, complete a task
 			if(this.getState() == AgentState.ACTIVE) {
-				this.cycles_since_synch++;
+				this.cycles_since_sync++;
 				this.completeNextTask();
 				
-				if(this.cycles_since_synch >= Agent.SYNCH_BACKLOG_EVERY) {
+				if(this.cycles_since_sync >= Agent.SYNC_BACKLOG_EVERY) {
 					// flag that it's time for me to refresh my backlog
 					this.support.firePropertyChange("refresh_backlog",0,this);
 				}
+			}
+			// manage WAITING when an urgent request has been seen
+			else if(this.getState() == AgentState.WAITING && this.getNumUrgent() > 0) {
+				// handle urgent tasks
+				this.cycles_since_sync++;
+				this.backup = this.getCurrenttask();
+				
+				if(this.completeNextTask(true)) {
+					// handled urgent request
+					this.numUrgentMinusOne();
+				}
+				else {
+					System.err.println(this.getName()+" unable to pivot to collaborate. Continuing to wait...");
+				}
+
+				// restore current task
+    			this.setCurrenttask(backup);
 			}
 			else {
 				this.updateStepsSinceLastActive();
@@ -284,12 +309,20 @@ public class Agent implements PropertyChangeListener {
 		this.completed_tasks.add(d);
 		
 		// add collaboration to ledger
-		this.ledger.put(d.getId(),
-				new Pair<Integer,ArrayList<SupplyImage>>(this.getAgentTime(),
-						new ArrayList<SupplyImage>()));
+		this.ledger.put(d.getId(), 
+				new LedgerEntry(this.getAgentTime(),
+								collab_effort,
+								new ArrayList<SupplyImage>()));
 		
 		// was there excess wait time?
-		int wait = (collaborator.getAgentTime()-collab_effort)-this.getAgentTime();
+		int wait = 0;
+		try {
+			wait += collaborator.getTimeStartedOn(d.ancillaryDemand.get())-this.getAgentTime();
+		}
+		catch (Exception e) {
+			e.printStackTrace();
+			wait = 0;
+		}
 		if(wait<0) {
 			System.err.println("ERROR: " + this.getName() + " has a wait value of "+wait);
 			wait = 0;
@@ -315,7 +348,7 @@ public class Agent implements PropertyChangeListener {
         	
         	// if tasks were completed before new global time
         	// mark as officially committed
-			if(ledger.get(d.getId()).getKey() <= committime) {
+			if(ledger.get(d.getId()).getTimeAtFinish() <= committime) {
 				// move demand to committed_tasks
 				committed_tasks.add(d);
 				// remove from completed_tasks
@@ -348,8 +381,8 @@ public class Agent implements PropertyChangeListener {
 		}
 		
 		// roll-back Supply usage
-		Pair<Integer,ArrayList<SupplyImage>> p = ledger.get(d.getId());
-		for (SupplyImage si : p.getValue()) {
+		LedgerEntry p = ledger.get(d.getId());
+		for (SupplyImage si : p.getSi()) {
 
 			// find matching Supply
 			for (Supply s : this.resources) {
@@ -361,10 +394,10 @@ public class Agent implements PropertyChangeListener {
 				}
 			}
 		}
-			
+		
 		if(isCompleted) {
-			// reset local time by adding back time expended
-			this.updateAgentTime(-p.getKey());
+			// reset local time
+			this.setAgentTime(p.getTimeAtStart());
 			
 			// reset demand to not completed
 			d.setActive();
@@ -372,9 +405,55 @@ public class Agent implements PropertyChangeListener {
 			// add back to backlog
 			this.addToBacklog(d);
 		}
+		else if(this.getState() == AgentState.WAITING){
+			// reset local time
+			this.setAgentTime(p.getTimeAtStart());
+		}
 		
 		// remove from ledger
 		ledger.remove(d.getId());
+	}
+	
+	protected void _partialRollBack(int timecap) {
+		
+		/* 
+		 * Only comes up when Agent is asked to rollback 
+		 * 1) performs rollback of Demand
+		 * 2) marks Demand as REPLACED to keep others from
+		 * collaborating on it. 
+		 * 3) Clones demand as a new demand with different UID
+		 * 4) Completes demand with a cap on effort
+		 */
+		
+		Demand lastdemand;
+		
+		// which demand?  try backup first
+		if(!this.backup.isEmpty()) {
+			lastdemand = this.backup.get();
+		}
+		// grab last completed demand instead
+		else if(!this.completed_tasks.isEmpty()) {
+			lastdemand = this.completed_tasks.get(this.completed_tasks.size()-1);
+		}
+		else {
+			// don't know what demand to rollback!
+			return;
+		}
+
+		// 1) full rollback of demand
+		_rollBack(lastdemand, lastdemand.getState()==DemandState.COMPLETE);
+		
+		// 2) update demand state to warn others
+		lastdemand.setState(DemandState.REPLACED);
+		
+		// 3) make a clone for use now
+		Demand newdemand = lastdemand.clone();
+		newdemand.setState(DemandState.QUEUED); // wards against being screened out by completeTask
+		// add clone to backlog
+		this.backlog_tasks.add(newdemand);
+		
+		// 4) perform work on clone with limited time
+		this.partialCompleteTask(newdemand,timecap);
 	}
 
 	/*
@@ -387,11 +466,7 @@ public class Agent implements PropertyChangeListener {
 	
 	/* 
 	 * Convenience Functions
-	 */
-	public boolean alreadyConsidered(Demand d) {
-		return this.seen_tasks.contains(d.getId());
-	}
-	
+	 */	
 	public void addToBacklog(Demand d) {
 		this.backlog_tasks.add(d);
 	}
@@ -546,32 +621,31 @@ public class Agent implements PropertyChangeListener {
 		else {
 			reqsupp = this.getSupplyDemandDictionary().get().getRequiredSupplies(d.getType());
 		}
-		boolean success = true;
 		
+		boolean success = true;
+		int work_already_done;
 		// consider all required supplies
 		for (Pair<SupplyType,SupplyQuality> p : reqsupp) {
-
-			// has this supply been handled already (e.g. COLLABORATION)
-			if (d.getPartial().containsKey(p.getKey())) {
-				// ASSUMPTION: anything on this list is 100% complete
-				continue;
-			}
-
+			
 			boolean nomatch = true;
-		
+			
+			// how much has already been done
+			work_already_done = d.getPartial().getOrDefault(p.getKey(), 0);
+			
 			// cycle through all of this agent's supplies
 			for (Supply s: this.resources){
 							
 				// match on type and quality
-				if ((s.getType() == p.getKey()) && (s.getQuality().ordinal() >= p.getValue().ordinal())) {
+				if ((s.getType() == p.getKey()) && 
+					(s.getQuality().ordinal() >= p.getValue().ordinal())) {
 					
 					// found case where random efficiency issues resulted in too much effort!
-					if(s.getAmount() < effort) {
+					if(s.getAmount() < (effort-work_already_done)) {
 						
 						// try achievable with a replenishment?
-						if(s.getCapacity() < effort) {
+						if(s.getCapacity() < (effort-work_already_done)) {
 							// failed to complete this part of a task
-							System.out.println("too much effort to complete task ("+s.getAmount()+","+effort+")");
+							System.out.println("too much effort to complete task ("+s.getAmount()+","+(effort-work_already_done)+")");
 							success = false;
 							break;							
 						}
@@ -579,9 +653,9 @@ public class Agent implements PropertyChangeListener {
 							// try to replenish and check again
 							s.replenishSupply();
 							effort += s.getReplenishTime();
-							if(s.getAmount() < effort) {
+							if(s.getAmount() < (effort-work_already_done)) {
 								// failed to complete this part of a task
-								System.out.println("too much effort to complete task ("+s.getAmount()+","+effort+")");
+								System.out.println("too much effort to complete task ("+s.getAmount()+","+(effort-work_already_done)+")");
 								success = false;
 								break;
 							}
@@ -589,15 +663,15 @@ public class Agent implements PropertyChangeListener {
 						
 					}
 					else {
-						nomatch= false; 
+						nomatch = false; 
 					}
 					
 					// add a record of current Supply state (for potential roll-back)
 					snapshot.add(new SupplyImage(s));
 					
 					// expend actual effort (which is >= amount in Demand d)
-					s.reduceAmount(effort);
-					d.getPartial().put(p.getKey(),effort); 
+					s.reduceAmount((effort-work_already_done));
+					d.getPartial().put(p.getKey(),effort); // if value present, replaces value
 					break;
 				}
 			}
@@ -617,14 +691,19 @@ public class Agent implements PropertyChangeListener {
 		return success;
 	}
 	
-	// use backlog to select next task
 	protected boolean completeNextTask() {
+		return completeNextTask(false);
+	}
+	
+	// use backlog to select next task
+	protected boolean completeNextTask(boolean urgent_only) {
 		
 		TASK_RESULTS retval = TASK_RESULTS.SUCCESS;
 		
 		if(!this.backlog_tasks.isEmpty()) {
 			
 			// TODO: consider alternate selection criteria on backlog
+			
 			// sort demands by priority
 	    	Collections.sort(this.backlog_tasks, new Comparator<Demand>() {
 	    		public int compare(Demand d1, Demand d2) {
@@ -638,9 +717,29 @@ public class Agent implements PropertyChangeListener {
 	    	while(true) {
 	    		
 	    		if(this.backlog_tasks.size()>dindex) {
+	    			// only allow work to be done on urgent tasks
+	    			if(urgent_only && this.backlog_tasks.get(dindex).getPriority() != DemandPriority.URGENT) {
+	    				break;
+	    			}
 	    			this.setCurrenttask(Optional.of(this.backlog_tasks.get(dindex)));
-	    		}	    		
-	    		retval = this.completeTask();
+	    			
+	    			if(this.getState()==AgentState.WAITING && 
+	    			   this.getCurrenttask().get().creator.get().getAgentTime()<this.getAgentTime()) {
+	    				
+	    				System.out.println(this.getName()+" rolling back unfinished Demand to collaborate");
+	    				this._partialRollBack(this.getCurrenttask().get().creator.get().getAgentTime());
+	    				
+	    				this.backup = Optional.empty();
+	    				this.setState(AgentState.ACTIVE);
+	    			}
+	    		}
+	    		try {
+	    			retval = this.completeTask();
+	    		}
+	    		catch(Exception e){
+	    			e.printStackTrace();
+	    			retval = TASK_RESULTS.FAIL;
+	    		}
 	    		
 	    		// exit loop if completed a demand or no demands left
 	    		if(retval == TASK_RESULTS.SUCCESS || 
@@ -651,6 +750,8 @@ public class Agent implements PropertyChangeListener {
 	    		if(retval == TASK_RESULTS.SKIP_TOOEARLY) {
 	    			// don't want to toss out demand, it's just too early for this
 	    			// agent to help, so look for the next one to work on
+	    			System.out.println(this.getName()+" is too far behind. skipping collaboration for now...");
+    				
 	    			dindex++;
 	    		}
 	    	}
@@ -659,12 +760,30 @@ public class Agent implements PropertyChangeListener {
 		return retval==TASK_RESULTS.SUCCESS;
 	}
 	
+	// look up demand in ledger and return effort expended on it
+	public int getEffortSpentOn(Demand d) {
+		if(ledger.containsKey(d.getId())){
+			return this.ledger.get(d.getId()).getEffort();
+		}
+		else {
+			return 0;
+		}
+	}
+	
+	// look up demand in ledger and return when it was started
+	public int getTimeStartedOn(Demand d) throws Exception {
+		if(ledger.containsKey(d.getId())){
+			return this.ledger.get(d.getId()).getTimeAtStart();
+		}
+		throw new Exception("Demand not in ledger");
+	}
+	
 	// start handling a Demand
 	// return value 0 = failed,
 	//              1 = success, 
 	//              2 = skipped - demand complete
     //              3 = skipped - not ready for the demand 
-	protected TASK_RESULTS completeTask() {
+	protected TASK_RESULTS completeTask() throws Exception {
 		
 		// fail fast
 		if(this.getCurrenttask().isEmpty()) {
@@ -678,14 +797,17 @@ public class Agent implements PropertyChangeListener {
 			d.setActive(); // mark task as started by an agent
 			
 			//this.setCurrenttask(Optional.of(d));
-			System.out.println("Agent "+this.getName()+" has started task "+d.toString());
+			System.out.println(this.getName()+" has started working on "+d.toString());
 		
 			if(d.getType() == DemandType.COLLABORATE) {
 				// -------- COLLABORATION ------------
 				
 				// requesting Agent gave up and marked Demand as incomplete
-				if(d.ancillaryDemand.get().getState() == DemandState.INCOMPLETE) {
-					System.out.println("...demand already marked INCOMPLETE. Moving on.");
+				if(d.ancillaryDemand.get().getState() == DemandState.INCOMPLETE ||
+				   d.ancillaryDemand.get().getState() == DemandState.REPLACED) {
+					System.out.println("...demand already marked "+
+							d.ancillaryDemand.get().getState().toString()+
+							" Moving on.");
 					
 					// set collaboration demand as complete to avoid others working on it
 					d.setComplete();
@@ -697,9 +819,9 @@ public class Agent implements PropertyChangeListener {
 				}
 				
 				// Agent local time behind requesting Agent, too early to engage
-				if(d.creator.get().getAgentTime()>this.getAgentTime()) {
+				if(d.creator.get().getTimeStartedOn(d.ancillaryDemand.get())>this.getAgentTime()) {
 					
-					// remove for now, will re-add on next DemandList synch
+					// remove for now, will re-add on next DemandList sync
 					//this.backlog_tasks.remove(d); 
 					this.setCurrenttask(Optional.empty());
 					return TASK_RESULTS.SKIP_TOOEARLY;
@@ -733,10 +855,10 @@ public class Agent implements PropertyChangeListener {
 				
 				// scale task effort on interactions
 				int collab_effort;
-				if(this.interactions.contains(d.creator.get().getId())) {
-					int factor = this.interactions.get(d.creator.get().getId());
+				if(this.interactions.contains(d.creator.get().getName())) {
+					int factor = this.interactions.getOrDefault(d.creator.get().getName(),0);
 					collab_effort = (int)Math.ceil(d.getEffort()*
-							Math.exp(-factor*Agent.INTERACTION_LEARNING_RATE));
+							Math.exp(-factor*this.interax_learning_rate));
 				}
 				else {
 					collab_effort = d.getEffort();
@@ -755,13 +877,16 @@ public class Agent implements PropertyChangeListener {
 					
 					// update local time and add to ledger
 					this.ledger.put(d.ancillaryDemand.get().getId(),
-							new Pair<Integer,ArrayList<SupplyImage>>(this.getAgentTime(), snapshot));
+							new LedgerEntry(this.getAgentTime(),
+											d.ancillaryDemand.get().getEffort(),
+											snapshot));
 					this.updateAgentTime(d.ancillaryDemand.get().getEffort());
 
 					// add demand and collaboration to ledger
 					this.ledger.put(d.getId(),
-							new Pair<Integer,ArrayList<SupplyImage>>(this.getAgentTime(), 
-									new ArrayList<SupplyImage>()));
+							new LedgerEntry(this.getAgentTime(),
+									collab_effort,
+									new ArrayList<SupplyImage>()));							
 					this.updateAgentTime(collab_effort);
 					
 					this.setCurrenttask(Optional.empty());
@@ -808,7 +933,7 @@ public class Agent implements PropertyChangeListener {
 
 					// make note of work completed (even if only PARTIAL and waiting...)
 					this.ledger.put(d.getId(),
-							new Pair<Integer,ArrayList<SupplyImage>>(this.getAgentTime(),snapshot));
+							new LedgerEntry(this.getAgentTime(), totaleffort, snapshot));
 					this.updateAgentTime(totaleffort);
 				}
 				else {
@@ -819,7 +944,7 @@ public class Agent implements PropertyChangeListener {
 					
 					this.backlog_tasks.remove(d);
 					this.ledger.put(d.getId(),
-							new Pair<Integer,ArrayList<SupplyImage>>(totaleffort,snapshot));
+							new LedgerEntry(this.getAgentTime(), totaleffort, snapshot));
 					this.setCurrenttask(Optional.empty());
 					
 					// fix any changes to Supplies during failed attempt
@@ -840,7 +965,71 @@ public class Agent implements PropertyChangeListener {
 		}
 		return TASK_RESULTS.SUCCESS;
 	}
+	
+	// task completion when effort is hard-limited (e.g. to allow for collaboration)
+	protected TASK_RESULTS partialCompleteTask(Demand d, int totaleffort) {
+		
+		// only pick up Demands that aren't in progress already
+		if(d.getState() == DemandState.QUEUED || d.getState() == DemandState.INCOMPLETE) {
+			d.setActive(); // mark task as started by an agent
 
+			System.out.println(this.getName()+" has started working on "+d.toString());
+			
+			ArrayList<SupplyImage> snapshot = new ArrayList<SupplyImage>();
+			
+			// update resources based on demand
+			if(this._expendEffort(d, totaleffort, snapshot)) {	
+				if(d.getState()==DemandState.PARTIAL) {
+					// fire signal for collaboration
+					this.setState(AgentState.WAITING);
+					
+					System.out.println("...agent is waiting for help from others");
+					this.support.firePropertyChange("collaborate",d,this); // announce need for help
+				}
+				else {
+					// consider Demand completed
+					d.setComplete();
+					
+					// move demand to cleared list
+					this.backlog_tasks.remove(d);
+					this.completed_tasks.add(d);
+					this.setCurrenttask(Optional.empty());
+				}
+
+				// make note of work completed (even if only PARTIAL and waiting...)
+				this.ledger.put(d.getId(),
+						new LedgerEntry(this.getAgentTime(),totaleffort,snapshot));
+				this.updateAgentTime(totaleffort);
+			}
+			else {
+				System.err.println("...failed to complete task");
+				
+				// can't complete task
+				// treat like completed, then instantly roll-back
+				
+				this.backlog_tasks.remove(d);
+				this.ledger.put(d.getId(),
+						new LedgerEntry(this.getAgentTime(),totaleffort,snapshot));
+				this.setCurrenttask(Optional.empty());
+				
+				// fix any changes to Supplies during failed attempt
+				this._rollBack(d,false);
+				
+				return TASK_RESULTS.FAIL;
+			}
+
+			System.out.println("...time needed to complete task: "+totaleffort);
+		}
+		else {
+			// task has already been completed, remove from backlog
+			this.backlog_tasks.remove(d);
+			this.setCurrenttask(Optional.empty());
+			//System.out.println("Demand state is "+d.getState());
+			return TASK_RESULTS.SKIP_COMPLETE;
+		}
+		return TASK_RESULTS.SUCCESS;
+	}
+	
 	public String toProgressString() {
 		
 		String progressString = "Name: "+this.getName()+"\n";
@@ -930,6 +1119,14 @@ public class Agent implements PropertyChangeListener {
 	public void setSupplyDemandDictionary(Optional<SupplyDemandDictionary> sd_dict) {
 		this.sd_dict = sd_dict;
 	}
+
+	public double getInteraxLearningRate() {
+		return interax_learning_rate;
+	}
+	
+	public void setInteraxLearningRate(double interax_learning_rate) {
+		this.interax_learning_rate = interax_learning_rate;
+	}
 	
 	public AgentState getState() { return state; }
 	public void setState(AgentState state) { this.state = state; }
@@ -952,5 +1149,18 @@ public class Agent implements PropertyChangeListener {
 	public SimpleIntegerProperty getMaxWaitCycles() { return max_wait_cycles; }
 	public void setMaxWaitCycles(int max_wait) {
 		this.max_wait_cycles.set(max_wait);
+	}
+	
+	public int getNumUrgent() {
+		return n_urgent;
+	}
+	public void setNumUrgent(int n_urgent) {
+		this.n_urgent = n_urgent;
+	}
+	public void numUrgentPlusOne(){
+		this.n_urgent += 1;
+	}
+	public void numUrgentMinusOne(){
+		this.n_urgent -= 1;
 	}
 }

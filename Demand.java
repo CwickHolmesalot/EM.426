@@ -161,6 +161,24 @@ public class Demand implements IDemand {
 		this.creator = Optional.empty();
 		this.partial = new Hashtable<SupplyType,Integer>();
 	}
+	
+	// replicate a demand
+	public Demand clone() {
+		Demand newdemand = new Demand();
+		newdemand.setName(this.getName());
+		newdemand.setPriority(this.getPriority());
+		newdemand.setType(this.getType());
+		newdemand.setEffort(this.getEffort());
+		newdemand.setStart(this.getStart());
+		newdemand.setStop(this.getStop());
+		newdemand.setRecur(this.getRecur());
+		newdemand.setEvery(this.getEvery());
+		newdemand.setUntil(this.getUntil());
+
+		newdemand.setState(DemandState.DEFINED);
+		
+		return newdemand;
+	}
 
 	/* 
 	 * Member Variables
