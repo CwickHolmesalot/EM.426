@@ -2,7 +2,6 @@
 import java.io.IOException;
 import java.util.List;
 import java.util.function.UnaryOperator;
-import java.util.regex.Pattern;
 
 import javafx.beans.property.SimpleListProperty;
 import javafx.beans.property.SimpleObjectProperty;
@@ -20,7 +19,6 @@ import javafx.scene.control.ProgressBar;
 import javafx.scene.control.TextField;
 import javafx.scene.control.TextFormatter;
 import javafx.scene.layout.BorderPane;
-import javafx.util.StringConverter;
 import javafx.util.converter.NumberStringConverter;
 
 public class InterAxView extends BorderPane {
@@ -28,7 +26,7 @@ public class InterAxView extends BorderPane {
 	    @FXML
 	    private TextField globalTimeTB, collabTB, completedTB, committedTB;
 	    @FXML
-	    private TextField agentCountTB, ncyclesTB, learnrateTB, newtaskTB;
+	    private TextField agentCountTB, ncyclesTB, taskpoolTB, pnewtaskTB;
 	    @FXML
 	    private Button goButton;
 	    @FXML
@@ -69,60 +67,6 @@ public class InterAxView extends BorderPane {
 	        
 	        simenv = new SimpleObjectProperty<SimEnvironment>();
 	        
-//	        Pattern doublePattern = Pattern.compile("-?(([1-9][0-9]*)|0)?(\\.[0-9]*)?");
-//	        final double MIN_LR = 0.5;
-//	        final double MAX_LR = 1.0;
-//	        UnaryOperator<TextFormatter.Change> LRfilter = change -> {
-//	            if (change.isAdded()) {
-//	            	if(!doublePattern.matcher(change.getControlNewText()).matches()){
-//	            		return null;
-//	            	}
-//	            	else if(!((Double.parseDouble(change.getControlNewText()) >= MIN_LR) && 
-//	            			  (Double.parseDouble(change.getControlNewText()) <= MAX_LR))) {
-//                        return null;
-//                    }
-//                }
-//
-//	            return change;
-//	        };
-//	        StringConverter<Double> LRconverter = new StringConverter<Double>(){
-//		        @Override
-//		        public Double fromString(String s) {
-//		            if (s.isEmpty() || "-".equals(s) || ".".equals(s) || "-.".equals(s)) {
-//		                return 0.0 ;
-//		            } else {
-//		                return Double.valueOf(s);
-//		            }
-//		        }
-//		        @Override
-//		        public String toString(Double d) {
-//		            return d.toString();
-//		        }
-//	        };
-//	        TextFormatter<Double> LRFormatter = new TextFormatter<>(LRconverter, 0.0, LRfilter);
-//	        learnrateTB.setTextFormatter(LRFormatter);
-	        
-	        final Integer MIN_LR = 0;
-	        final Integer MAX_LR = 100;
-	        UnaryOperator<TextFormatter.Change> LRfilter = change -> {
-	            if (change.isDeleted()) {
-	                return change;
-	            }
-	            
-	            // How would the text look like after the change?
-	            String txt = change.getControlNewText();
-	            
-	            // Try parsing and check if the result is in range
-	            try {
-	                int n = Integer.parseInt(txt);
-	                return MIN_LR <= n && n <= MAX_LR ? change : null;
-	            }
-	            catch (NumberFormatException e) {
-	                return null;
-	            }
-	        };
-	        learnrateTB.setTextFormatter(new TextFormatter<>(LRfilter));
-	        
 	        final double MIN_PNT = 0;
 	        final double MAX_PNT = 100;
 	        UnaryOperator<TextFormatter.Change> PNTfilter = change -> {
@@ -142,7 +86,7 @@ public class InterAxView extends BorderPane {
 	                return null;
 	            }
 	        };
-	        newtaskTB.setTextFormatter(new TextFormatter<>(PNTfilter));
+	        pnewtaskTB.setTextFormatter(new TextFormatter<>(PNTfilter));
 	        
 	        completedList = new SimpleListProperty<Data<Number,Number>>(FXCollections.observableArrayList());
 	        committedList = new SimpleListProperty<Data<Number,Number>>(FXCollections.observableArrayList());
@@ -218,12 +162,14 @@ public class InterAxView extends BorderPane {
 	        	// lock in sim controls after starting
 		    	agentCountTB.setEditable(false);
 		    	ncyclesTB.setEditable(false);
-		    	learnrateTB.setEditable(false);
-		    	newtaskTB.setEditable(false);
+		    	taskpoolTB.setEditable(false);
+		    	pnewtaskTB.setEditable(false);
 		    	agentCountTB.setDisable(true);
 		    	ncyclesTB.setDisable(true);
-		    	learnrateTB.setDisable(true);
-		    	newtaskTB.setDisable(true);
+		    	taskpoolTB.setDisable(true);
+		    	pnewtaskTB.setDisable(true);
+		    	
+		    	goButton.setDisable(true);
 		    	
 		    	// run simulation
 	        	startSim();
@@ -234,8 +180,8 @@ public class InterAxView extends BorderPane {
 	        	if(oldV != null) {
 	    		    agentCountTB.textProperty().unbindBidirectional(simenv.get().global_time);
 			    	ncyclesTB.textProperty().unbindBidirectional(simenv.get().n_cycles);
-			    	learnrateTB.textProperty().unbindBidirectional(simenv.get().interax_lr);
-			    	newtaskTB.textProperty().unbindBidirectional(simenv.get().prob_new_demand);
+			    	taskpoolTB.textProperty().unbindBidirectional(simenv.get().n_init_demands);
+			    	pnewtaskTB.textProperty().unbindBidirectional(simenv.get().prob_new_demand);
 	    		    globalTimeTB.textProperty().unbindBidirectional(simenv.get().global_time);
 	    		    collabTB.textProperty().unbindBidirectional(simenv.get().n_collaborations);
 	    		    completedTB.textProperty().unbindBidirectional(simenv.get().n_completed);
@@ -251,8 +197,8 @@ public class InterAxView extends BorderPane {
 			    	NumberStringConverter cv = new NumberStringConverter();
 				    agentCountTB.textProperty().bindBidirectional(simenv.get().n_agents,cv);
 			    	ncyclesTB.textProperty().bindBidirectional(simenv.get().n_cycles,cv);
-			    	learnrateTB.textProperty().bindBidirectional(simenv.get().interax_lr,cv);
-			    	newtaskTB.textProperty().bindBidirectional(simenv.get().prob_new_demand,cv);
+			    	taskpoolTB.textProperty().bindBidirectional(simenv.get().n_init_demands,cv);
+			    	pnewtaskTB.textProperty().bindBidirectional(simenv.get().prob_new_demand,cv);
 				    globalTimeTB.textProperty().bindBidirectional(simenv.get().global_time,cv);
 				    collabTB.textProperty().bindBidirectional(simenv.get().n_collaborations,cv);
 				    completedTB.textProperty().bindBidirectional(simenv.get().n_completed,cv);

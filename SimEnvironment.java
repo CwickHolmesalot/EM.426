@@ -46,6 +46,7 @@ public class SimEnvironment implements PropertyChangeListener {
 	public SimpleBooleanProperty is_finished;
 	public SimpleIntegerProperty interax_lr;
 	public SimpleIntegerProperty prob_new_demand;
+	public SimpleIntegerProperty n_init_demands;
 	
 	/* 
 	 * Member variables for simulation environment
@@ -120,6 +121,7 @@ public class SimEnvironment implements PropertyChangeListener {
 		n_sci_agents = new SimpleIntegerProperty();     // number of ScientistAgents in the sim
 		n_eng_agents = new SimpleIntegerProperty();     // number of EngineerAgents in the sim
 		n_mgr_agents = new SimpleIntegerProperty();     // number of ManagerAgents in the sim
+		n_init_demands = new SimpleIntegerProperty();   // number of Demands to create for initial pool
 		progress = new SimpleDoubleProperty();          // simulation progress
 		is_finished = new SimpleBooleanProperty();      // has simulation completed?
 		
@@ -145,6 +147,7 @@ public class SimEnvironment implements PropertyChangeListener {
 		this.setNumCompleted(0);
 		this.setNumCommitted(0);
 		this.setInteraxLR(85);
+		this.setNumInitDemands(10);
 		
 		// initialize environment
 		initialize();
@@ -214,7 +217,7 @@ public class SimEnvironment implements PropertyChangeListener {
 		Demand newdemand = new Demand("Demand"+String.valueOf(demand_list.getDemandCount()),
 				DemandPriority.values()[dprior], 
 				DemandType.values()[dtype], 
-				rand.nextInt(25));
+				rand.nextInt(25)+1);  // demand effort between 1 and 25
 		
 		System.out.println("+D Simulation created new demand: "+newdemand.toString());
 		
@@ -280,6 +283,15 @@ public class SimEnvironment implements PropertyChangeListener {
 				agent_list.add(mgrAgent);
 			}
 		}
+		
+		FileWriter agentWriter = null;
+		try {
+			agentWriter = new FileWriter("agent_report.txt");
+		}
+		catch (Exception e) {
+			e.printStackTrace();
+		}
+			
 		for (Agent a : agent_list) {
 			
 			// update interaction rate
@@ -295,14 +307,33 @@ public class SimEnvironment implements PropertyChangeListener {
 			
 			// have the agent pre-populate backlog from initial demands
 			a.start(demand_list);
+			
+			// log this agent exists
+			if(agentWriter != null) {
+				try {
+					agentWriter.write(a.getName()+"\n");
+				}
+				catch (Exception e) {
+					e.printStackTrace();
+				}
+			}
 		}
+		
+		if(agentWriter != null) {
+			try {
+				agentWriter.close();
+			}
+			catch (Exception e) {
+				e.printStackTrace();
+			}
+		}	
 	}
 	
 	// print progress update to console
 	public void progressReport() {
 		
 		try{
-			FileWriter myWriter = new FileWriter("interaction_report.txt");
+			FileWriter interaxWriter = new FileWriter("interaction_report.txt");
 			
 			System.out.println("------Progress Report-------");
 			System.out.println("Simulation Time: "+this.getGlobalTime().get()+"\n\n");
@@ -310,15 +341,16 @@ public class SimEnvironment implements PropertyChangeListener {
 			int col=0, comp=0, comm=0;
 			
 			for (Agent a : agent_list) {
-				col += a.interactions.size();
+				col += a.getCollaborationCount();
 				comp += a.completed_tasks.size();
 				comm += a.committed_tasks.size();
 				System.out.println(a.toProgressString()+"\n");
-				a.reportInteractions(myWriter);
+				
+				a.reportInteractions(interaxWriter);
 			}
 			System.out.println("--------End Report---------");
 			
-			myWriter.close();
+			interaxWriter.close();
 			
 			// collaborations will be noted 2x
 			n_collaborations.set(col/2);
@@ -419,7 +451,7 @@ public class SimEnvironment implements PropertyChangeListener {
 		 */
 
 		/****** CREATE SOME DEMANDS ******/
-		for (int nd = 0; nd < 10; nd++) {
+		for (int nd = 0; nd < this.getNumInitDemands(); nd++) {
 			this.createDemand(false);
 		}
 
@@ -458,7 +490,7 @@ public class SimEnvironment implements PropertyChangeListener {
 	        this.syncGlobalTime();
 	        
 	        // report out progress
-	        if(i%10 == 0) {
+	        if(i%1 == 0) {
 				this.setProgress((i+1)/(double)this.getNumCycles().get());
 				System.out.println("PROGRESS: "+this.progress.get());
 	        	// report out on progress
@@ -569,42 +601,34 @@ public class SimEnvironment implements PropertyChangeListener {
 	public final SimpleListProperty<Data<Number, Number>> completeTimeseriesProperty() {
 		return this.complete_timeseries;
 	}
-	
 
 	public final ObservableList<Data<Number, Number>> getCompleteTimeseries() {
 		return this.completeTimeseriesProperty().get();
 	}
-	
 
 	public final void setCompleteTimeseries(final ObservableList<Data<Number, Number>> complete_timeseries) {
 		this.completeTimeseriesProperty().set(complete_timeseries);
 	}
-	
 
 	public final SimpleListProperty<Data<Number, Number>> commitTimeseriesProperty() {
 		return this.commit_timeseries;
 	}
-	
 
 	public final ObservableList<Data<Number, Number>> getCommitTimeseries() {
 		return this.commitTimeseriesProperty().get();
 	}
-	
 
 	public final void setCommitTimeseries(final ObservableList<Data<Number, Number>> commit_timeseries) {
 		this.commitTimeseriesProperty().set(commit_timeseries);
 	}
-	
 
 	public final SimpleListProperty<Data<Number, Number>> collabTimeseriesProperty() {
 		return this.collab_timeseries;
 	}
-	
 
 	public final ObservableList<Data<Number, Number>> getCollabTimeseries() {
 		return this.collabTimeseriesProperty().get();
 	}
-	
 
 	public final void setCollabTimeseries(final ObservableList<Data<Number, Number>> collab_timeseries) {
 		this.collabTimeseriesProperty().set(collab_timeseries);
@@ -633,6 +657,19 @@ public class SimEnvironment implements PropertyChangeListener {
 	public final void setProbNewDemand(final int prob) {
 		this.probNewDemandProperty().set(prob);
 	}
+
+	public final SimpleIntegerProperty numInitDemandsProperty() {
+		return this.n_init_demands;
+	}
+
+	public final int getNumInitDemands() {
+		return this.numInitDemandsProperty().get();
+	}
+
+	public final void setNumInitDemands(final int n_init_demands) {
+		this.numInitDemandsProperty().set(n_init_demands);
+	}
+	
 
 //	public static void main(String args[]) {
 //				

@@ -144,7 +144,7 @@ public class Agent implements PropertyChangeListener {
 	public void start(DemandList dl){
 		
 		// add tasks to backlog
-		refreshBacklog(dl, true);
+		refreshBacklog(dl, false); //true);
 		
 		// child Agent class functionality can override this function
 		this.setState(AgentState.ACTIVE);
@@ -179,8 +179,11 @@ public class Agent implements PropertyChangeListener {
 			}
 		}
 	}
-	
+
 	public void doSomething(PropertyChangeEvent evt) {
+		doSomething(evt, false);
+	}
+	public void doSomething(PropertyChangeEvent evt, boolean verbose) {
 		
 		// child Agent class functionality can override this function
 		if(evt.getPropertyName()=="newdemand") {
@@ -198,7 +201,9 @@ public class Agent implements PropertyChangeListener {
 					// check demand match
  					if(this.isDemandAchieveableANY(d, false)) {
 						this.addToBacklog(d);
-						System.out.println(this.getName()+" added demand to backlog: "+d.toString());
+						
+						if(verbose)
+							System.out.println(this.getName()+" added demand to backlog: "+d.toString());
 						
 						// keep track of urgent requests
 						if(d.getPriority() == DemandPriority.URGENT) {
@@ -317,16 +322,13 @@ public class Agent implements PropertyChangeListener {
 		// was there excess wait time?
 		int wait = 0;
 		try {
-			wait += collaborator.getTimeStartedOn(d.ancillaryDemand.get())-this.getAgentTime();
+			// wait time is non-negative
+			wait = Math.max(0, collaborator.getTimeStartedOn(d.ancillaryDemand.get())-this.getAgentTime());
 		}
 		catch (Exception e) {
 			e.printStackTrace();
 			wait = 0;
 		}
-		if(wait<0) {
-			System.err.println("ERROR: " + this.getName() + " has a wait value of "+wait);
-			wait = 0;
-		}		
 		
 		// move local time forward from collaboration
 		this.updateAgentTime(collab_effort+wait);
@@ -1030,6 +1032,16 @@ public class Agent implements PropertyChangeListener {
 		return TASK_RESULTS.SUCCESS;
 	}
 	
+	public int getCollaborationCount() {
+		int count = 0;
+		Iterator<Entry<String, Integer>> it = this.interactions.entrySet().iterator();
+	    while (it.hasNext()) {
+	        count += it.next().getValue();
+	    }
+	    
+	    return count;
+	}
+	
 	public String toProgressString() {
 		
 		String progressString = "Name: "+this.getName()+"\n";
@@ -1040,7 +1052,7 @@ public class Agent implements PropertyChangeListener {
 		progressString += "Completed: "+this.completed_tasks.size()+" demands\n";
 		progressString += "Committed: "+this.committed_tasks.size()+" demands\n";
 		progressString += "Abandoned: "+this.abandoned_tasks.size()+" demands\n";
-		progressString += "Collaborations: "+this.interactions.keySet().size()+"\n";
+		progressString += "Collaborations: "+this.getCollaborationCount()+"\n";
 		progressString += "List of Interactions: \n";
 		
 		//Iterator<Entry<UUID, Integer>> it = this.interactions.entrySet().iterator();
@@ -1060,7 +1072,8 @@ public class Agent implements PropertyChangeListener {
 	    while (it.hasNext()) {
 	    	try {
 		        // progressString += ("("+this.getId()+","+it.next().getKey()+")\n"); //pair.getValue());
-		    	intWriter.write(this.getName()+","+it.next().getKey()+"\n");
+	    		Entry<String, Integer> interax = it.next();
+		    	intWriter.write(this.getName()+","+interax.getKey()+","+interax.getValue()+"\n");
 	    	}
 	    	catch (IOException e) {
 				// fail gracefully
