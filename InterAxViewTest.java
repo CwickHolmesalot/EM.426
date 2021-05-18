@@ -13,6 +13,7 @@ public class InterAxViewTest extends Application {
     public void start(Stage pStage) throws Exception {
     	
     	InterAxView iav = new InterAxView();
+    	//InterAxViewMC iav = new InterAxViewMC();
     	
     	//String currentDir = new java.io.File(".").getCanonicalPath();
     	//System.out.println("Current dir:"+currentDir);

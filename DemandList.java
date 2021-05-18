@@ -33,6 +33,11 @@ public class DemandList implements Iterable<Demand> {
 		}
 	}
 	
+	public void reset() {
+		this.getDemandlist().clear();
+		this.setSupport(new PropertyChangeSupport(this));
+	}
+
 	public int getDemandCount() {
 		return this.getDemandlist().size();
 	}
@@ -64,6 +69,14 @@ public class DemandList implements Iterable<Demand> {
 		return sd_dict;
 	}
 
+	public PropertyChangeSupport getSupport() {
+		return support;
+	}
+
+	public void setSupport(PropertyChangeSupport support) {
+		this.support = support;
+	}
+	
     /* 
      * PropertyChangeListener Functions
      */

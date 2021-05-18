@@ -6,8 +6,11 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashSet;
+import java.util.Iterator;
 import java.lang.Math;
 import java.util.Random;
+import java.util.UUID;
 
 import javafx.beans.property.SimpleListProperty;
 import javafx.beans.property.SimpleBooleanProperty;
@@ -43,7 +46,7 @@ public class SimEnvironment implements PropertyChangeListener {
 	public SimpleIntegerProperty n_mgr_agents;
 	public SimpleDoubleProperty  progress;
 	public SimpleIntegerProperty n_cycles;
-	public SimpleBooleanProperty is_finished;
+	public SimpleBooleanProperty finished;
 	public SimpleIntegerProperty interax_lr;
 	public SimpleIntegerProperty prob_new_demand;
 	public SimpleIntegerProperty n_init_demands;
@@ -73,7 +76,11 @@ public class SimEnvironment implements PropertyChangeListener {
 	public SimpleListProperty<Data<Number,Number>> complete_timeseries;
 	public SimpleListProperty<Data<Number,Number>> commit_timeseries;
 	public SimpleListProperty<Data<Number,Number>> collab_timeseries;
-
+	
+	// allow monte carlo
+	private int n_mc_runs;
+	public ArrayList<ArrayList<Integer>> mc_rx_timeseries;
+	
 	// helper function to ensure underutilized agents float to top
 	void sortAgents() {
 		
@@ -96,68 +103,46 @@ public class SimEnvironment implements PropertyChangeListener {
 	 */
 	public SimEnvironment() {
 		
-		// list of all demands in simulation
-		demand_list = new DemandList();
-		
-		// list of all agents in simulation
-		agent_list = new ArrayList<Agent>();
+		n_mc_runs = 20;
+		mc_rx_timeseries = new ArrayList<ArrayList<Integer>>();
 		
 		// random number generator
 		rand = new Random();
 		rand.setSeed(43);
 		
-		// PropertyChangeListener set-up
-		support = new PropertyChangeSupport(this);
-		
-		// no requests for collaboration yet
-		collab_requests = new ArrayList<PropertyChangeEvent>();
-		
-		// no resync requests yet
-		resync_requests = new ArrayList<PropertyChangeEvent>();
-		
-		// establish property variables
-		n_cycles = new SimpleIntegerProperty();         // number of cycles to simulate
-		prob_new_demand = new SimpleIntegerProperty();  // probability a demand is generated per cycle
-		n_sci_agents = new SimpleIntegerProperty();     // number of ScientistAgents in the sim
-		n_eng_agents = new SimpleIntegerProperty();     // number of EngineerAgents in the sim
-		n_mgr_agents = new SimpleIntegerProperty();     // number of ManagerAgents in the sim
-		n_init_demands = new SimpleIntegerProperty();   // number of Demands to create for initial pool
-		progress = new SimpleDoubleProperty();          // simulation progress
-		is_finished = new SimpleBooleanProperty();      // has simulation completed?
-		
-		global_time = new SimpleIntegerProperty();      // simulation global time
+		// simulation parameters
 		n_agents = new SimpleIntegerProperty();         // number of agents in simulation
+		n_cycles = new SimpleIntegerProperty();         // number of cycles to simulate
+		n_init_demands = new SimpleIntegerProperty();   // number of Demands to create for initial pool
+		prob_new_demand = new SimpleIntegerProperty();  // probability a demand is generated per cycle
+		interax_lr = new SimpleIntegerProperty();       // learning rate from collaborations
+		
+		progress = new SimpleDoubleProperty();          // simulation progress
+		finished = new SimpleBooleanProperty();         // has simulation completed?
+		global_time = new SimpleIntegerProperty();      // simulation global time
 		n_collaborations = new SimpleIntegerProperty(); // number of agent collaborations
 		n_completed = new SimpleIntegerProperty();      // number of demand completions
 		n_committed = new SimpleIntegerProperty();      // number of demand commits
-		interax_lr = new SimpleIntegerProperty();       // learning rate from collaborations
-
+		n_sci_agents = new SimpleIntegerProperty();     // number of ScientistAgents in the sim
+		n_eng_agents = new SimpleIntegerProperty();     // number of EngineerAgents in the sim
+		n_mgr_agents = new SimpleIntegerProperty();     // number of ManagerAgents in the sim
+		
+		agent_list = new ArrayList<Agent>();
+		collab_requests = new ArrayList<PropertyChangeEvent>();
+		resync_requests = new ArrayList<PropertyChangeEvent>();
+		
 		complete_timeseries = new SimpleListProperty<Data<Number,Number>>(FXCollections.observableArrayList());
 		commit_timeseries   = new SimpleListProperty<Data<Number,Number>>(FXCollections.observableArrayList());
 		collab_timeseries   = new SimpleListProperty<Data<Number,Number>>(FXCollections.observableArrayList());
-	
-		// set default values
-		this.setNumCycles(100);
-		this.setProbNewDemand(1);
-		this.setNumAgents(2);
-		this.setProgress(0.0);
-		this.setIsFinished(false);
-		this.setGlobalTime(0);
-		this.setNumCollaborations(0);
-		this.setNumCompleted(0);
-		this.setNumCommitted(0);
-		this.setInteraxLR(85);
-		this.setNumInitDemands(10);
 		
-		// initialize environment
-		initialize();
-	}
+		this.setNumAgents(5);
+		this.setNumCycles(200);
+		this.setNumInitDemands(20);
+		this.setProbNewDemand(0);
 
-	/*
-	 * Helper Functions
-	 */
-	private void initialize() {
-	
+		// list of all demands in simulation
+		demand_list = new DemandList();
+		
 		// create dictionary for matching skills with needs
 		
 		/* For this example, skills assignments:
@@ -190,6 +175,43 @@ public class SimEnvironment implements PropertyChangeListener {
 
 		// view mapping
 		demand_list.printSupplyDemandMap();
+
+		// initialize environment
+		initialize();
+	}
+
+	/*
+	 * Helper Functions
+	 */
+	private void initialize() {
+
+		// clear any existing demands
+		demand_list.reset();
+		
+		// list of all agents in simulation
+		agent_list.clear();
+		
+		// PropertyChangeListener set-up
+		support = new PropertyChangeSupport(this);
+		
+		// no requests for collaboration yet
+		collab_requests.clear();
+		
+		// no resync requests yet
+		resync_requests.clear();
+		
+		// set default values
+		this.setProgress(0.0);
+		this.setFinished(false);
+		this.setGlobalTime(0);
+		this.setNumCollaborations(0);
+		this.setNumCompleted(0);
+		this.setNumCommitted(0);
+		
+		// clear timeseries
+		complete_timeseries.clear();
+		commit_timeseries.clear();		
+		collab_timeseries.clear();
 	}
 
 	// generate demands for demand_list
@@ -200,7 +222,7 @@ public class SimEnvironment implements PropertyChangeListener {
 		int dtype = rand.nextInt(DemandType.values().length);
 		
 		// don't allow collaboration demands to be created here
-		if(this.getNumAgents().get()==2) {
+		if(this.getNumAgents()==2) {
 			// force collaboration on NEED3 for 2 agent stress test
 			dtype = DemandType.NEED3.ordinal();
 		}
@@ -243,12 +265,12 @@ public class SimEnvironment implements PropertyChangeListener {
 		}
 		
 		// validation test with 1 agent
-		if(!this.getNumAgents().greaterThan(1).get()) {
+		if(!(this.getNumAgents()>1)) {
 			// validation test with 1 agent
 			Agent supAgent = new SuperAgent("Super1");
 			agent_list.add(supAgent);
 		}
-		else if(!this.getNumAgents().greaterThan(2).get()) {
+		else if(!(this.getNumAgents()>2)) {
 			// validation test with 2 agents
 			Agent yinAgent = new YinAgent("AgentA");
 			Agent yangAgent = new YangAgent("AgentB");
@@ -286,7 +308,11 @@ public class SimEnvironment implements PropertyChangeListener {
 		
 		FileWriter agentWriter = null;
 		try {
-			agentWriter = new FileWriter("agent_report.txt");
+			agentWriter = new FileWriter("agent_report_"+
+										 this.getNumAgents()+"_"+
+										 this.getNumCycles()+"_"+
+										 this.getNumInitDemands()+"_"+
+										 this.getProbNewDemand()+".txt");
 		}
 		catch (Exception e) {
 			e.printStackTrace();
@@ -329,28 +355,57 @@ public class SimEnvironment implements PropertyChangeListener {
 		}	
 	}
 	
+	// helper function to get all unique ids
+	void _addDemandsToSet(HashSet<UUID> hs,ArrayList<Demand> al) {
+		for (Demand d : al) {
+			hs.add(d.getId());
+		}
+	}
+	
 	// print progress update to console
-	public void progressReport() {
+	public void progressReport(boolean finalreport) {
 		
 		try{
-			FileWriter interaxWriter = new FileWriter("interaction_report.txt");
-			
-			System.out.println("------Progress Report-------");
+			FileWriter interaxWriter = null;
+			ArrayList<Integer> collabList = null;
+			if(finalreport) {
+				interaxWriter = new FileWriter("interaction_report_"+
+												  this.getNumAgents()+"_"+
+												  this.getNumCycles()+"_"+
+												  this.getNumInitDemands()+"_"+
+												  this.getProbNewDemand()+".txt");
+				collabList = new ArrayList<Integer>();
+				System.out.println("------Final Progress Report-------");
+			}
+			else {
+				System.out.println("------Progress Report-------");
+			}
 			System.out.println("Simulation Time: "+this.getGlobalTime().get()+"\n\n");
 			
 			int col=0, comp=0, comm=0;
+
+			HashSet<UUID> unique_comp = new HashSet<UUID>();
+			HashSet<UUID> unique_comm = new HashSet<UUID>();
 			
 			for (Agent a : agent_list) {
 				col += a.getCollaborationCount();
-				comp += a.completed_tasks.size();
-				comm += a.committed_tasks.size();
+				this._addDemandsToSet(unique_comp,a.getCompletedtasks());
+				this._addDemandsToSet(unique_comm,a.getCommittedtasks());
+				if(finalreport) {
+					collabList.add(a.getCollaborationCount());
+					a.reportInteractions(interaxWriter);				
+				}
 				System.out.println(a.toProgressString()+"\n");
-				
-				a.reportInteractions(interaxWriter);
+			}
+			
+			if(finalreport) {
+				this.mc_rx_timeseries.add(collabList);
+				interaxWriter.close();
 			}
 			System.out.println("--------End Report---------");
 			
-			interaxWriter.close();
+			comp = unique_comp.size();
+			comm = unique_comm.size();
 			
 			// collaborations will be noted 2x
 			n_collaborations.set(col/2);
@@ -365,10 +420,14 @@ public class SimEnvironment implements PropertyChangeListener {
 			int index = collab_timeseries.size()-1;
 			if((index<0) || 
 			   (collab_timeseries.get().get(index).getXValue().intValue() != this.getGlobalTime().get())) {
-				collab_timeseries.get().add(new Data<Number,Number>(this.getGlobalTime().get(),(col/2)));
 				commit_timeseries.get().add(new Data<Number,Number>(this.getGlobalTime().get(),comm));
 				complete_timeseries.get().add(new Data<Number,Number>(this.getGlobalTime().get(),comp));
+				collab_timeseries.get().add(new Data<Number,Number>(this.getGlobalTime().get(),(col/2)));
 			}
+			
+//			if(finalreport) {
+//				this.mc_rx_timeseries.add(new Pair<Number,Number>(comm,col/2));
+//			}
 		}
 		catch (IOException e) {
 			// fail gracefully
@@ -423,7 +482,7 @@ public class SimEnvironment implements PropertyChangeListener {
     	
     	int  min_time = Integer.MAX_VALUE;
     	
-    	// randomize agent order
+    	// order agents by utilization (local time)
     	this.sortAgents();
    	
     	// check all agents to identify min local time
@@ -444,84 +503,141 @@ public class SimEnvironment implements PropertyChangeListener {
 		this.setGlobalTime(min_time);
     }
     
+	// Time management signals
+    public void finalizeGlobalTime() {
+    	
+    	// collect all local times and sort in ascending order
+    	ArrayList<Integer> agent_times = new ArrayList<Integer>();
+    	for (Agent a : this.agent_list) {
+    		agent_times.add(a.getAgentTime());
+    	}
+    	Collections.sort(agent_times);
+    	
+    	// pop minimum (should be current global time)
+    	agent_times.remove(0);
+    	
+    	// cycle through remaining times and loop until 
+    	// all completed demands are also committed
+    	for (Integer gt : agent_times) {
+    		support.firePropertyChange("commituntil", null, gt);
+    		this.setGlobalTime(gt);
+    	}
+    	this.progressReport(true);
+    }
+    
 	public void start() {
 
 		/*
 		 * Start simulation
 		 */
 
-		/****** CREATE SOME DEMANDS ******/
-		for (int nd = 0; nd < this.getNumInitDemands(); nd++) {
-			this.createDemand(false);
-		}
-
-		/****** DEFINE AGENTS ******/
-		// establish a 2:2:1 ratio between agents
-		this.setNumSciAgents(Math.max(1,(int)(Math.floor(this.getNumAgents().get()*0.4))));
-		this.setNumEngAgents(Math.max(1,(int)(Math.floor(this.getNumAgents().get()*0.4))));
-		this.setNumMgrAgents(Math.max(1,(int)(Math.floor(this.getNumAgents().get()*0.2))));
-		
-		this.createAgents();
-		
-		System.out.println("Max number of cycles:" +this.getNumCycles().get());
-		
-		
-		for (int i = 0; i < this.getNumCycles().get(); i++) {						
+		int sim_cnt = 0;
+		while(true) {
 			
-			/****** GENERATE DEMANDS ******/
-			this.createRandomDemand();
-			
-			try
-			{
-				// pause before next time step
-			    Thread.sleep(1);
+			/****** CREATE SOME DEMANDS ******/
+			for (int nd = 0; nd < this.getNumInitDemands(); nd++) {
+				this.createDemand(false);
 			}
-			catch(InterruptedException ex)
-			{
-				// kill loop if an interrupt is captured
-			    Thread.currentThread().interrupt();
-			    break;
+	
+			/****** DEFINE AGENTS ******/
+			// establish a 2:2:1 ratio between agents
+			this.setNumSciAgents(Math.max(1,(int)(Math.floor(this.getNumAgents()*0.4))));
+			this.setNumEngAgents(Math.max(1,(int)(Math.floor(this.getNumAgents()*0.4))));
+			this.setNumMgrAgents(Math.max(1,(int)(Math.floor(this.getNumAgents()*0.2))));
+			
+			this.createAgents();
+			
+			System.out.println("Max number of cycles:" +this.getNumCycles());
+			
+			int prevgt = this.getGlobalTime().get(); 
+			for (int i = 0; i < this.getNumCycles(); i++) {						
+				
+				/****** GENERATE DEMANDS ******/
+				this.createRandomDemand();
+				
+				// manage agent requests
+				this.manageRequests();
+				
+				// update simulation global time
+		        this.syncGlobalTime();
+		        
+		        // report out progress
+		        if(i%2 == 0) {
+		        	
+					this.setProgress((i+1)/(double)this.getNumCycles());
+					System.out.println("PROGRESS: "+this.progress.get());
+					
+					if(this.getGlobalTime().get() > prevgt) {
+						// report out on progress
+						this.progressReport(false);
+						prevgt = this.getGlobalTime().get();
+					}
+					
+					// pause so the UI can catch up
+		        	try { 
+		        		Thread.sleep(200);
+	        		}
+		        	catch(InterruptedException ex){ 
+		        		// do nothing
+					}
+		        }
 			}
 			
-			// manage agent requests
-			this.manageRequests();
+			this.finalizeGlobalTime();
 			
-			// update simulation global time
-	        this.syncGlobalTime();
-	        
-	        // report out progress
-	        if(i%1 == 0) {
-				this.setProgress((i+1)/(double)this.getNumCycles().get());
-				System.out.println("PROGRESS: "+this.progress.get());
-	        	// report out on progress
-	        	this.progressReport();
+			// mark complete
+			this.setProgress(1.0);
+			this.setFinished(true);
+			
+			// reinitialize for next sim
+			if(++sim_cnt >= this.getNumMCRuns()) {
+				break;
+			}
+			else {
+				
+				// pause so the UI can catch up
 	        	try { 
-	        		Thread.sleep(500);
+	        		Thread.sleep(1000);
         		}
 	        	catch(InterruptedException ex){ 
 	        		// do nothing
 				}
-	        }
+	        	
+				initialize();
+			}
 		}
 		
-		// mark complete
-		this.setProgress(1.0);
-		this.setIsFinished(true);
+		// write final monte carlo results to file
+		FileWriter mcWriter = null;
+		try {
+			mcWriter = new FileWriter("montecarlo_report_"+
+										 this.getNumAgents()+"_"+
+										 this.getNumCycles()+"_"+
+										 this.getNumInitDemands()+"_"+
+										 this.getProbNewDemand()+".txt");
+			
+			Iterator<ArrayList<Integer>> iter = this.getMcRxTimeseries().iterator();
+			while (iter.hasNext()) {
+				ArrayList<Integer> al = iter.next();
+				for (Integer i : al) {
+					mcWriter.write(i+",");
+				}
+				mcWriter.write("\n");
+			}
+			mcWriter.close();
+		}
+		catch (Exception e) {
+			e.printStackTrace();
+		}
 	}
 	
 	// Getters and Setters
-	public SimpleIntegerProperty getGlobalTime() {
-		return global_time;
-	}
-
+	public SimpleIntegerProperty getGlobalTime() {	return global_time;	}
 	public void setGlobalTime(int globaltime) {
 		this.global_time.set(globaltime);
 	}
 
-	public SimpleIntegerProperty getNumSciAgents() {
-		return n_sci_agents;
-	}
-
+	public SimpleIntegerProperty getNumSciAgents() { return n_sci_agents; }
 	public void setNumSciAgents(int n_agents) {
 		this.n_sci_agents.set(n_agents);
 	}
@@ -542,60 +658,12 @@ public class SimEnvironment implements PropertyChangeListener {
 		this.n_mgr_agents.set(n_agents);
 	}
 
-	public SimpleIntegerProperty getNumAgents() {
-		return n_agents;
-	}
-
-	public void setNumAgents(int n_agents) {
-		this.n_agents.set(n_agents);
-	}
-
-	public SimpleIntegerProperty getNumCollaborations() {
-		return n_collaborations;
-	}
-
-	public void setNumCollaborations(int n_collab) {
-		this.n_collaborations.set(n_collab);
-	}
-
-	public SimpleIntegerProperty getNumCompleted() {
-		return n_completed;
-	}
-
-	public void setNumCompleted(int n_complete) {
-		this.n_completed.set(n_complete);
-	}
-
-	public SimpleIntegerProperty getNumCommitted() {
-		return n_committed;
-	}
-
-	public void setNumCommitted(int n_commit) {
-		this.n_committed.set(n_commit);
-	}
-
 	public SimpleDoubleProperty getProgress() {
 		return progress;
 	}
 
 	public void setProgress(double p) {
 		this.progress.set(p);
-	}
-	
-	public SimpleIntegerProperty getNumCycles() {
-		return n_cycles;
-	}
-
-	public void setNumCycles(int n) {
-		this.n_cycles.set(n);
-	}
-
-	public SimpleBooleanProperty getIsFinished() {
-		return is_finished;
-	}
-
-	public void setIsFinished(boolean finished) {
-		this.is_finished.set(finished);
 	}
 
 	public final SimpleListProperty<Data<Number, Number>> completeTimeseriesProperty() {
@@ -669,7 +737,94 @@ public class SimEnvironment implements PropertyChangeListener {
 	public final void setNumInitDemands(final int n_init_demands) {
 		this.numInitDemandsProperty().set(n_init_demands);
 	}
+
+	public final SimpleIntegerProperty numCyclesProperty() {
+		return this.n_cycles;
+	}
 	
+	public final int getNumCycles() {
+		return this.numCyclesProperty().get();
+	}
+	
+	public final void setNumCycles(final int n_cycles) {
+		this.numCyclesProperty().set(n_cycles);
+	}
+
+	public final SimpleIntegerProperty numAgentsProperty() {
+		return this.n_agents;
+	}
+	
+	public final int getNumAgents() {
+		return this.numAgentsProperty().get();
+	}
+	
+	public final void setNumAgents(final int n_agents) {
+		this.numAgentsProperty().set(n_agents);
+	}
+
+	public final SimpleBooleanProperty finishedProperty() {
+		return this.finished;
+	}
+
+	public final boolean isFinished() {
+		return this.finishedProperty().get();
+	}
+	
+	public final void setFinished(final boolean fin) {
+		this.finishedProperty().set(fin);
+	}
+
+	public final SimpleIntegerProperty numCollaborationsProperty() {
+		return this.n_collaborations;
+	}
+
+	public final int getNumCollaborations() {
+		return this.numCollaborationsProperty().get();
+	}
+
+	public final void setNumCollaborations(final int n_collab) {
+		this.numCollaborationsProperty().set(n_collab);
+	}
+
+	public final SimpleIntegerProperty numCompletedProperty() {
+		return this.n_completed;
+	}
+	
+	public final int getNumCompleted() {
+		return this.numCompletedProperty().get();
+	}
+	
+	public final void setNumCompleted(final int n_comp) {
+		this.numCompletedProperty().set(n_comp);
+	}
+	
+	public final SimpleIntegerProperty numCommittedProperty() {
+		return this.n_committed;
+	}
+	
+	public final int getNumCommitted() {
+		return this.numCommittedProperty().get();
+	}
+
+	public final void setNumCommitted(final int n_commit) {
+		this.numCommittedProperty().set(n_commit);
+	}
+	
+	public int getNumMCRuns() {
+		return n_mc_runs;
+	}
+
+	public void setNumMCRuns(int n_mc_runs) {
+		this.n_mc_runs = n_mc_runs;
+	}
+	
+	public ArrayList<ArrayList<Integer>> getMcRxTimeseries() {
+		return mc_rx_timeseries;
+	}
+
+	public void setMcRxTimeseries(ArrayList<ArrayList<Integer>> timeseries) {
+		this.mc_rx_timeseries = timeseries;
+	}
 
 //	public static void main(String args[]) {
 //				

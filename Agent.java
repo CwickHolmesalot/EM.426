@@ -451,6 +451,8 @@ public class Agent implements PropertyChangeListener {
 		// 3) make a clone for use now
 		Demand newdemand = lastdemand.clone();
 		newdemand.setState(DemandState.QUEUED); // wards against being screened out by completeTask
+		System.out.println("+D cloning demand after rollback: "+newdemand.toString());
+		
 		// add clone to backlog
 		this.backlog_tasks.add(newdemand);
 		
@@ -1034,9 +1036,9 @@ public class Agent implements PropertyChangeListener {
 	
 	public int getCollaborationCount() {
 		int count = 0;
-		Iterator<Entry<String, Integer>> it = this.interactions.entrySet().iterator();
-	    while (it.hasNext()) {
-	        count += it.next().getValue();
+		//Iterator<Entry<String, Integer>> it = this.interactions.entrySet().iterator();
+	    for (int v : interactions.values() ) {
+	        count += v;
 	    }
 	    
 	    return count;
@@ -1054,12 +1056,12 @@ public class Agent implements PropertyChangeListener {
 		progressString += "Abandoned: "+this.abandoned_tasks.size()+" demands\n";
 		progressString += "Collaborations: "+this.getCollaborationCount()+"\n";
 		progressString += "List of Interactions: \n";
-		
+
 		//Iterator<Entry<UUID, Integer>> it = this.interactions.entrySet().iterator();
 		Iterator<Entry<String, Integer>> it = this.interactions.entrySet().iterator();
 	    while (it.hasNext()) {
-	        // progressString += ("("+this.getId()+","+it.next().getKey()+")\n"); //pair.getValue());
-	    	progressString += ("("+this.getName()+","+it.next().getKey()+")\n"); //pair.getValue());
+	    	Entry<String, Integer> nextentry = it.next();
+	    	progressString += ("("+this.getName()+","+nextentry.getKey()+") x "+nextentry.getValue()+"\n");
 	    }
 		// * total collaborations
 		return progressString;
@@ -1072,8 +1074,8 @@ public class Agent implements PropertyChangeListener {
 	    while (it.hasNext()) {
 	    	try {
 		        // progressString += ("("+this.getId()+","+it.next().getKey()+")\n"); //pair.getValue());
-	    		Entry<String, Integer> interax = it.next();
-		    	intWriter.write(this.getName()+","+interax.getKey()+","+interax.getValue()+"\n");
+	    		Entry<String, Integer> nextentry = it.next();
+		    	intWriter.write(this.getName()+","+nextentry.getKey()+","+nextentry.getValue()+"\n");
 	    	}
 	    	catch (IOException e) {
 				// fail gracefully
@@ -1109,6 +1111,7 @@ public class Agent implements PropertyChangeListener {
 	}
 	
 	public ArrayList<Demand> getCompletedtasks() { return completed_tasks; }
+	public ArrayList<Demand> getCommittedtasks() { return committed_tasks; }
 	
 	public int getAgentTime() { return agentTime; }
 	public void setAgentTime(int agentTime) { 
