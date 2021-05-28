@@ -1,0 +1,10 @@
+Manager1,Engineer1,2
+Manager1,Scientist2,1
+Engineer1,Manager1,2
+Engineer1,Scientist1,2
+Scientist1,Engineer1,2
+Scientist1,Engineer2,2
+Engineer2,Scientist2,1
+Engineer2,Scientist1,2
+Scientist2,Manager1,1
+Scientist2,Engineer2,1

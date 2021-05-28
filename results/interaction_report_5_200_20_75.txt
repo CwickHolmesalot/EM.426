@@ -1,0 +1,16 @@
+Manager1,Engineer1,12
+Manager1,Scientist2,1
+Manager1,Scientist1,4
+Manager1,Engineer2,16
+Engineer2,Scientist2,3
+Engineer2,Manager1,16
+Engineer2,Scientist1,3
+Scientist1,Engineer1,3
+Scientist1,Manager1,4
+Scientist1,Engineer2,3
+Engineer1,Manager1,12
+Engineer1,Scientist2,5
+Engineer1,Scientist1,3
+Scientist2,Engineer1,5
+Scientist2,Manager1,1
+Scientist2,Engineer2,3

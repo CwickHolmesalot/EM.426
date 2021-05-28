@@ -50,6 +50,10 @@ public class SimEnvironment implements PropertyChangeListener {
 	public SimpleIntegerProperty interax_lr;
 	public SimpleIntegerProperty prob_new_demand;
 	public SimpleIntegerProperty n_init_demands;
+
+	// allow monte carlo
+	public ArrayList<ArrayList<Integer>> mc_rx_timeseries;
+	private final int MC_NUM_RUNS = 1;
 	
 	/* 
 	 * Member variables for simulation environment
@@ -77,10 +81,6 @@ public class SimEnvironment implements PropertyChangeListener {
 	public SimpleListProperty<Data<Number,Number>> commit_timeseries;
 	public SimpleListProperty<Data<Number,Number>> collab_timeseries;
 	
-	// allow monte carlo
-	private int n_mc_runs;
-	public ArrayList<ArrayList<Integer>> mc_rx_timeseries;
-	
 	// helper function to ensure underutilized agents float to top
 	void sortAgents() {
 		
@@ -102,8 +102,7 @@ public class SimEnvironment implements PropertyChangeListener {
 	 * Constructors
 	 */
 	public SimEnvironment() {
-		
-		n_mc_runs = 20;
+	
 		mc_rx_timeseries = new ArrayList<ArrayList<Integer>>();
 		
 		// random number generator
@@ -811,13 +810,9 @@ public class SimEnvironment implements PropertyChangeListener {
 	}
 	
 	public int getNumMCRuns() {
-		return n_mc_runs;
+		return MC_NUM_RUNS;
 	}
 
-	public void setNumMCRuns(int n_mc_runs) {
-		this.n_mc_runs = n_mc_runs;
-	}
-	
 	public ArrayList<ArrayList<Integer>> getMcRxTimeseries() {
 		return mc_rx_timeseries;
 	}
